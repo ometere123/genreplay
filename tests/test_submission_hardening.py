@@ -2,7 +2,7 @@ from pathlib import Path
 
 from genreplay.capture import CaptureService
 from genreplay.doctor import run_doctor
-from genreplay.evidence import EvidenceService
+from genreplay.evidence import EvidenceService, verify_evidence_bundle
 from genreplay.report import build_timeline, explain_capsule
 
 from .helpers import TX_ID, receipt, trace
@@ -39,6 +39,13 @@ class ReceiptOnlyReplayRpc(FullReplayRpc):
         return trace(eq_outputs=[])
 
 
+class NotVotedRpc(FullReplayRpc):
+    def get_transaction_receipt(self, tx_id):
+        value = receipt(rounds=1, execution="NOT_VOTED")
+        value["txExecutionResult"] = 0
+        return value
+
+
 def test_timeline_tracks_multiple_rounds():
     capsule = CaptureService(FullReplayRpc()).capture(TX_ID)
     timeline = build_timeline(capsule)
@@ -55,6 +62,17 @@ def test_explain_is_rule_based_and_finds_disagreement():
     assert result["primary_cause"] == "NONDETERMINISTIC_DISAGREEMENT"
     assert any(item["kind"] == "nondet_disagreement" for item in result["evidence"])
     assert "does not call an AI model" in result["note"]
+
+
+def test_not_voted_is_not_mislabeled_as_runtime_failure():
+    capsule = CaptureService(NotVotedRpc()).capture(TX_ID)
+    analysis = capsule.read_json("analysis/summary.json")
+    codes = {item["code"] for item in analysis["warnings"]}
+    assert "DECIDED_WITHOUT_EXECUTION_VOTE" in codes
+    assert "DECIDED_BUT_EXECUTION_NOT_SUCCESSFUL" not in codes
+    explanation = explain_capsule(capsule)
+    assert explanation["primary_cause"] == "EXECUTION_RESULT_NOT_VOTED"
+    assert "not as proof of a contract runtime error" in explanation["conclusion"]
 
 
 def test_deep_doctor_proves_round_validator_replay():
@@ -82,6 +100,7 @@ def test_evidence_bundle_contains_reviewer_artifacts(tmp_path: Path):
     assert result["replay"]["attempted"] == 3
     assert result["replay"]["successful"] == 2
     assert result["replay"]["successful_sources"] == ["round-trace", "round-trace"]
+    assert "timeline.json" in result["artifact_integrity"]
     assert (output / "incident.genreplay").exists()
     assert (output / "evidence.json").exists()
     assert (output / "timeline.json").exists()
@@ -89,6 +108,18 @@ def test_evidence_bundle_contains_reviewer_artifacts(tmp_path: Path):
     assert (output / "replays" / "round-000.json").exists()
     assert (output / "replays" / "round-001.json").exists()
     assert (output / "replays" / "receipt-current.json").exists()
+    verified = verify_evidence_bundle(output)
+    assert verified["ok"] is True
+    assert verified["file_count"] == len(result["artifacts"])
+
+
+def test_evidence_bundle_tampering_is_detected(tmp_path: Path):
+    output = tmp_path / "evidence"
+    EvidenceService(FullReplayRpc()).generate(TX_ID, output)
+    (output / "timeline.json").write_text("{}\n", encoding="utf-8")
+    verified = verify_evidence_bundle(output)
+    assert verified["ok"] is False
+    assert "digest mismatch: timeline.json" in verified["errors"]
 
 
 def test_evidence_bundle_records_successful_transaction_level_replay(tmp_path: Path):
