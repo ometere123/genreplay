@@ -9,11 +9,38 @@ def test_success_requires_status_and_execution():
     assert execution_succeeded(receipt(status="Undetermined")) is False
 
 
+def test_numeric_v06_status_and_execution_are_named():
+    r = receipt()
+    r.pop("statusName")
+    r.pop("txExecutionResultName")
+    r["status"] = 7
+    r["txExecutionResult"] = 2
+    result = analyze_receipt(r, contract_code_captured=True)
+    assert result["status"] == "FINALIZED"
+    assert result["status_code"] == 7
+    assert result["execution_result"] == "FINISHED_WITH_ERROR"
+    assert result["execution_result_code"] == 2
+    assert result["successful"] is False
+    assert "DECIDED_BUT_EXECUTION_NOT_SUCCESSFUL" in {
+        item["code"] for item in result["warnings"]
+    }
+
+
+def test_numeric_v06_success_is_recognized():
+    r = receipt()
+    r.pop("statusName")
+    r.pop("txExecutionResultName")
+    r["status"] = 7
+    r["txExecutionResult"] = 1
+    assert execution_succeeded(r) is True
+
+
 def test_round_leader_is_resolved():
     result = analyze_receipt(
         receipt(), lifecycle=lifecycle(), traces={0: trace()}, contract_code_captured=True
     )
     assert result["rounds"][0]["leader"] == result["rounds"][0]["validators"][1]
+    assert result["rounds"][0]["result_name"] == "MAJORITY_AGREE"
 
 
 def test_finalized_error_warns():
