@@ -90,7 +90,18 @@ def analyze_receipt(
 
     status_norm = _norm(status_name)
     execution_norm = _norm(execution_name)
-    if status_norm in {"accepted", "finalized"} and execution_norm not in {
+    if status_norm in {"accepted", "finalized"} and execution_norm == "notvoted":
+        warnings.append(
+            {
+                "code": "DECIDED_WITHOUT_EXECUTION_VOTE",
+                "severity": "medium",
+                "message": (
+                    "consensus status is decided/finalized but the receipt records NOT_VOTED for "
+                    "execution; this is not treated as a successful return or mislabeled as a runtime error"
+                ),
+            }
+        )
+    elif status_norm in {"accepted", "finalized"} and execution_norm not in {
         "finishedwithreturn",
         "success",
     }:
