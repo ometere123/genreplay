@@ -6,7 +6,12 @@ from genreplay.capsule import Capsule
 from genreplay.codec import decode_eq_blocks_outputs
 from genreplay.errors import ReplayError
 from genreplay.models import ReplayScenario
-from genreplay.replay import ReplayEngine, replay_signature, scenario_from_capsule
+from genreplay.replay import (
+    ReplayEngine,
+    replay_signature,
+    scenario_from_capsule,
+    scenario_from_receipt_outputs,
+)
 from genreplay.util import canonical_json_bytes
 
 from .helpers import TX_ID, receipt, trace
@@ -28,8 +33,8 @@ def make_capsule(eq_outputs=None):
     )
 
 
-def make_receipt_fallback_capsule(encoded: str):
-    r = receipt()
+def make_receipt_fallback_capsule(encoded: str, *, rounds: int = 1):
+    r = receipt(rounds=rounds)
     r["eqBlocksOutputs"] = encoded
     return Capsule.build(
         tool_version="0.2.0",
@@ -92,31 +97,32 @@ def test_receipt_eq_blocks_outputs_decodes_rlp_and_strips_padding():
 def test_single_round_receipt_outputs_are_replay_fallback():
     scenario = scenario_from_capsule(make_receipt_fallback_capsule("c9010286706164646564"))
     assert scenario.leader_results == ["0x01", "0x02"]
-    assert "receipt.eqBlocksOutputs" in scenario.notes[0]
+    assert scenario.round_number == 0
+    assert "single-round" in scenario.notes[0]
+
+
+def test_multi_round_receipt_outputs_are_not_misattributed_to_round():
+    cap = make_receipt_fallback_capsule("c9010286706164646564", rounds=2)
+    with pytest.raises(ReplayError, match="transaction-level"):
+        scenario_from_capsule(cap, round_number=0)
+
+
+def test_multi_round_receipt_outputs_have_explicit_transaction_level_scenario():
+    cap = make_receipt_fallback_capsule("c9010286706164646564", rounds=2)
+    scenario = scenario_from_receipt_outputs(cap)
+    assert scenario.leader_results == ["0x01", "0x02"]
+    assert scenario.round_number is None
+    assert "not attributed to a specific consensus round" in scenario.notes[0]
+    restored = ReplayScenario.from_dict(scenario.to_dict())
+    assert restored.round_number is None
 
 
 def test_padding_only_receipt_is_not_fake_replay_evidence():
+    cap = make_receipt_fallback_capsule("c786706164646564")
     with pytest.raises(ReplayError, match="requires leader_results"):
-        scenario_from_capsule(make_receipt_fallback_capsule("c786706164646564"))
-
-
-def test_multi_round_receipt_outputs_are_not_misattributed():
-    r = receipt(rounds=2)
-    r["eqBlocksOutputs"] = "c9010286706164646564"
-    cap = Capsule.build(
-        tool_version="0.2.0",
-        captured_at="2026-09-06T00:00:00Z",
-        tx_id=TX_ID,
-        capture_level="protocol",
-        network={"rpc_url": "http://localhost:4000/api"},
-        files={
-            "transaction/receipt.json": canonical_json_bytes(r),
-            "analysis/summary.json": b"{}\n",
-            "capture/issues.json": b"[]\n",
-        },
-    )
-    with pytest.raises(ReplayError, match="not round-keyed"):
-        scenario_from_capsule(cap, round_number=0)
+        scenario_from_capsule(cap)
+    with pytest.raises(ReplayError, match="does not contain substantive"):
+        scenario_from_receipt_outputs(cap)
 
 
 def test_missing_round_outputs_rejected():
