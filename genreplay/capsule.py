@@ -28,7 +28,7 @@ class CapsuleManifest:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "CapsuleManifest":
+    def from_dict(cls, value: dict[str, Any]) -> CapsuleManifest:
         return cls(
             format=str(value["format"]),
             version=int(value["version"]),
@@ -58,7 +58,7 @@ class Capsule:
         capture_level: str,
         network: dict[str, Any],
         files: dict[str, bytes],
-    ) -> "Capsule":
+    ) -> Capsule:
         metadata: dict[str, dict[str, Any]] = {}
         for name, data in sorted(files.items()):
             metadata[name] = {
@@ -95,7 +95,7 @@ class Capsule:
         return destination
 
     @classmethod
-    def load(cls, path: str | Path, *, verify: bool = True) -> "Capsule":
+    def load(cls, path: str | Path, *, verify: bool = True) -> Capsule:
         source = Path(path)
         try:
             with zipfile.ZipFile(source, "r") as zf:
