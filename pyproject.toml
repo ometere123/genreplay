@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genreplay"
+version = "0.1.0"
+description = "Capture, replay, fork, minimize, and regression-test GenLayer consensus executions."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "GenReplay contributors"}]
+keywords = ["genlayer", "genvm", "consensus", "debugging", "replay", "developer-tools"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Debuggers",
+  "Topic :: Software Development :: Testing",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-cov>=6.0",
+  "ruff>=0.9",
+]
+
+[project.scripts]
+genreplay = "genreplay.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ometere123/genreplay"
+Repository = "https://github.com/ometere123/genreplay"
+Issues = "https://github.com/ometere123/genreplay/issues"
+
+[tool.setuptools.packages.find]
+include = ["genreplay*"]
+
+[tool.setuptools.package-data]
+genreplay = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
