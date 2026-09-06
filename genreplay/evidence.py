@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .capture import CaptureService
-from .replay import ReplayEngine, scenario_from_capsule
+from .replay import ReplayEngine, scenario_from_capsule, scenario_from_receipt_outputs
 from .report import build_timeline, explain_capsule
 from .util import pretty_json, sha256_bytes
 
@@ -60,25 +60,64 @@ class EvidenceService:
         self._write_json(root / "analysis.json", analysis)
 
         replay_results: list[dict[str, Any]] = []
+        replay_artifacts: list[str] = []
         if replay_rounds:
             engine = ReplayEngine(self.rpc)
             for round_number in capsule.trace_rounds():
+                path = f"replays/round-{round_number:03d}.json"
                 try:
                     scenario = scenario_from_capsule(capsule, round_number=round_number)
                     result = engine.run(scenario).to_dict()
                     item = {
+                        "source": "round-trace",
                         "round": round_number,
+                        "round_attributed": True,
                         "ok": True,
                         "scenario": result["scenario"],
                         "signature": result["signature"],
                         "raw": result["raw"],
                     }
                 except Exception as exc:
-                    item = {"round": round_number, "ok": False, "error": str(exc)}
+                    item = {
+                        "source": "round-trace",
+                        "round": round_number,
+                        "round_attributed": True,
+                        "ok": False,
+                        "error": str(exc),
+                    }
                 replay_results.append(item)
-                self._write_json(root / "replays" / f"round-{round_number:03d}.json", item)
+                replay_artifacts.append(path)
+                self._write_json(root / path, item)
+
+            receipt_path = "replays/receipt-current.json"
+            try:
+                scenario = scenario_from_receipt_outputs(capsule)
+                result = engine.run(scenario).to_dict()
+                item = {
+                    "source": "receipt.eqBlocksOutputs",
+                    "round": None,
+                    "round_attributed": False,
+                    "ok": True,
+                    "scenario": result["scenario"],
+                    "signature": result["signature"],
+                    "raw": result["raw"],
+                }
+            except Exception as exc:
+                item = {
+                    "source": "receipt.eqBlocksOutputs",
+                    "round": None,
+                    "round_attributed": False,
+                    "ok": False,
+                    "error": str(exc),
+                }
+            replay_results.append(item)
+            replay_artifacts.append(receipt_path)
+            self._write_json(root / receipt_path, item)
 
         replay_successes = sum(1 for item in replay_results if item.get("ok"))
+        successful_sources = [
+            str(item.get("source")) for item in replay_results if item.get("ok")
+        ]
         manifest = {
             "schema_version": EVIDENCE_SCHEMA_VERSION,
             "tx_id": capsule.manifest.tx_id,
@@ -105,6 +144,7 @@ class EvidenceService:
                 "attempted": len(replay_results),
                 "successful": replay_successes,
                 "failed": len(replay_results) - replay_successes,
+                "successful_sources": successful_sources,
             },
             "primary_cause": explanation.get("primary_cause"),
             "artifacts": [
@@ -114,11 +154,7 @@ class EvidenceService:
                 "explanation.json",
                 "analysis.json",
                 "capture-issues.json",
-                *[
-                    f"replays/round-{item['round']:03d}.json"
-                    for item in replay_results
-                    if isinstance(item.get("round"), int)
-                ],
+                *replay_artifacts,
             ],
         }
         self._write_json(root / "evidence.json", manifest)
