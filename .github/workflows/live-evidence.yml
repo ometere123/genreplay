@@ -12,7 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      KNOWN_TX: "0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890"
+      # GenLayer JS uses this transaction in its Bradbury smoke tests. It is a
+      # useful compatibility case but its receipt contains padding-only
+      # eqBlocksOutputs, so it is intentionally not treated as replay proof.
+      CAPTURE_TX: "0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890"
+      # Public Bradbury nondeterministic resolution transaction from a real
+      # GenLayer project. This case is required to prove validator-mode replay.
+      REPLAY_TX: "0x6bef2019bdb2fbb40204f459530b1c1ddd4c6358147ad89bb12750d2a1273b93"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,32 +27,58 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: pip install -e '.[dev]'
-      - name: Prove Bradbury transaction compatibility
+
+      - name: Capture official SDK smoke transaction
         run: |
-          mkdir -p live-proof
-          genreplay doctor --network testnet-bradbury --tx-id "$KNOWN_TX" --json | tee live-proof/doctor.json
-      - name: Generate real GenReplay evidence bundle
-        run: |
-          genreplay evidence "$KNOWN_TX" \
+          mkdir -p live-proof/capture-case
+          genreplay doctor --network testnet-bradbury --tx-id "$CAPTURE_TX" --json \
+            | tee live-proof/capture-case/doctor.json
+          genreplay evidence "$CAPTURE_TX" \
             --network testnet-bradbury \
-            --output live-proof/evidence \
-            --json | tee live-proof/evidence-command.json
+            --output live-proof/capture-case/evidence \
+            --no-replay \
+            --json | tee live-proof/capture-case/evidence-command.json
+
+      - name: Prove nondeterministic validator replay
+        run: |
+          mkdir -p live-proof/replay-case
+          genreplay doctor --network testnet-bradbury --tx-id "$REPLAY_TX" --json \
+            | tee live-proof/replay-case/doctor.json
+          genreplay evidence "$REPLAY_TX" \
+            --network testnet-bradbury \
+            --output live-proof/replay-case/evidence \
+            --json | tee live-proof/replay-case/evidence-command.json
+
       - name: Enforce submission evidence quality
         run: |
           python - <<'PY'
           import json
           from pathlib import Path
 
-          doctor = json.loads(Path("live-proof/doctor.json").read_text())
-          evidence = json.loads(Path("live-proof/evidence/evidence.json").read_text())
+          capture = json.loads(
+              Path("live-proof/capture-case/evidence/evidence.json").read_text()
+          )
+          replay_doctor = json.loads(
+              Path("live-proof/replay-case/doctor.json").read_text()
+          )
+          replay = json.loads(
+              Path("live-proof/replay-case/evidence/evidence.json").read_text()
+          )
 
-          assert doctor["transaction"]["tx_id"] == "0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890"
-          assert evidence["capsule"]["integrity_ok"] is True
-          assert evidence["capture"]["file_count"] >= 3
-          assert evidence["consensus"]["round_count"] >= 1
-          assert evidence["replay"]["successful"] >= 1, evidence["replay"]
-          print("REAL GENLAYER EVIDENCE: PASS")
+          assert capture["tx_id"] == "0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890"
+          assert capture["capsule"]["integrity_ok"] is True
+          assert capture["capture"]["file_count"] >= 3
+          assert capture["consensus"]["round_count"] >= 1
+
+          assert replay["tx_id"] == "0x6bef2019bdb2fbb40204f459530b1c1ddd4c6358147ad89bb12750d2a1273b93"
+          assert replay["capsule"]["integrity_ok"] is True
+          assert replay["capture"]["file_count"] >= 3
+          assert replay["consensus"]["round_count"] >= 1
+          assert replay["replay"]["successful"] >= 1, replay["replay"]
+          assert replay_doctor["capabilities"]["validator_replay"] == "available"
+          print("REAL GENLAYER CAPTURE + VALIDATOR REPLAY EVIDENCE: PASS")
           PY
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
