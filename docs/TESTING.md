@@ -1,6 +1,6 @@
 # Testing Strategy
 
-GenReplay is infrastructure that interprets protocol evidence. Tests therefore focus on preventing silent evidence corruption and semantic overclaiming.
+GenReplay is infrastructure that interprets protocol evidence. Tests therefore focus on preventing silent evidence corruption, unsafe archive handling, and semantic overclaiming.
 
 ## Offline suite
 
@@ -10,72 +10,116 @@ Run:
 pytest -q
 ```
 
-The suite does not require Docker, a wallet, an LLM provider, or a GenLayer network.
+The offline suite requires no Docker, wallet, LLM provider, or GenLayer network.
 
-Coverage areas:
+Coverage includes:
 
 - current built-in network identities;
 - raw JSON-RPC envelope handling and error propagation;
 - exact GenLayer parameter names (`txId` versus debug `txID`);
+- v0.6/testnet numeric transaction and execution-result normalization;
 - capture of multiple consensus rounds;
 - partial/pruned debug trace handling;
 - historical state block selection;
 - contract source/schema/state capture;
 - SHA-256 capsule integrity and tamper rejection;
 - deterministic capsule serialization;
+- duplicate ZIP-member rejection;
+- traversal/unsafe-path rejection;
+- undeclared payload rejection;
+- capsule size/file-count limits;
 - consensus status versus execution-success rules;
 - nondeterministic disagreement diagnostics;
-- validator-mode `leader_results` construction;
-- refusal to call a leader-only execution a validator replay;
+- protocol RLP decoding of receipt `eqBlocksOutputs`;
+- padding-sentinel removal;
+- round-attributed validator `leader_results` construction;
+- transaction-level stored-proposal replay without false round attribution;
+- refusal to call empty/padding-only evidence a validator replay;
+- deep transaction-aware doctor capability probing;
+- reviewer evidence bundle generation;
+- deterministic timeline/explanation reports;
 - conservative prefix minimization;
 - structural capsule diffs;
 - portable pytest regression export;
-- CLI smoke paths.
+- CLI machine-readable output paths;
+- public Python API behavior.
 
-## Packaging checks
+## Standard CI
 
-```bash
+`.github/workflows/ci.yml` runs on Python 3.11, 3.12, and 3.13.
+
+Every matrix job must pass:
+
+```text
+pip install -e '.[dev]'
+ruff check .
+pytest -q
 python -m compileall -q genreplay tests
-python -m pip wheel . --no-deps --no-build-isolation -w dist-test
 python -m genreplay --version
 python -m genreplay networks
+public API import assertions
+python -m pip wheel . --no-deps -w dist
 ```
 
-## Lint
+The wheel check matters because GenReplay is distributed as tooling rather than as a deployed app.
 
-```bash
-ruff check .
+## Real-network evidence CI
+
+Real public RPC checks run separately in:
+
+```text
+.github/workflows/live-evidence.yml
 ```
 
-GitHub Actions runs lint and tests on Python 3.11, 3.12 and 3.13.
+They are separate because public development networks may reset, rate-limit, change historical retention, or expose different debug capabilities from local Studio/Localnet environments. Those conditions should not make deterministic unit tests flaky, but they **must** be visible before a submission/release.
 
-## Live integration test plan
+The live workflow currently exercises two Bradbury cases.
 
-Live checks are intentionally not required for ordinary CI because public development RPCs can reset, rate-limit, or prune debugging data.
+### Compatibility / negative replay control
 
-Before a release candidate:
+```text
+0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890
+```
 
-1. Select a known transaction on Localnet or Studionet.
-2. Run `genreplay doctor` against the endpoint.
-3. Capture it with traces, code and state enabled.
-4. Verify the capsule.
-5. Compare captured round count with the network receipt.
-6. Replay round 0 in validator mode.
-7. Export a scenario and replay it unchanged.
-8. Deploy a patched candidate contract to Localnet.
-9. Fork the scenario to the candidate address with `--latest-state`.
-10. Confirm the changed validator behavior is represented by the replay signature.
-11. Export the incident as a pytest regression.
-12. Run the exported test with `GENREPLAY_RPC` set.
+This is a transaction used by GenLayer's JavaScript SDK smoke tests. It proves real capture and numeric v0.6 result handling. Its public replay evidence is padding-only, so GenReplay must refuse validator replay rather than manufacture one.
+
+### Nondeterministic multi-round replay case
+
+```text
+0x6bef2019bdb2fbb40204f459530b1c1ddd4c6358147ad89bb12750d2a1273b93
+```
+
+This public Bradbury transaction exposes multi-round consensus history, historical source/state, debug traces, and substantive transaction-level `eqBlocksOutputs`.
+
+Its per-round traces do not expose historical `eq_outputs`, so GenReplay must preserve the distinction:
+
+```text
+round trace output -> round-attributed replay
+receipt eqBlocksOutputs -> transaction-level replay, round_number = null
+```
+
+The workflow requires at least one real validator-mode replay to succeed for this evidence case before the release gate is considered green.
+
+## Evidence artifact retention
+
+The live workflow uses `actions/upload-artifact` with `if: always()` so failures still produce inspectable evidence. This is deliberate: a network/RPC incompatibility is useful release evidence and must not disappear merely because a gate failed.
+
+Each evidence bundle contains the capsule, integrity result, analysis, timeline, deterministic explanation, capture gaps, and replay attempts.
+
+See [`SUBMISSION_EVIDENCE.md`](SUBMISSION_EVIDENCE.md).
 
 ## Failure injection
 
-The offline fake RPC deliberately supports partial failures. New capture surfaces should include tests where:
+The fake RPC suite deliberately supports partial failures. New capture/replay surfaces should include cases where:
 
 - method is unsupported;
 - history is pruned;
 - response type is malformed;
-- JSON-RPC error includes a code/data payload;
-- one round succeeds and another fails.
+- JSON-RPC error includes code/data;
+- one round succeeds and another fails;
+- trace output is empty while receipt output exists;
+- receipt output contains only protocol padding;
+- transaction-level output exists across multi-round history;
+- archive content is malicious or malformed.
 
-A best-effort capture must remain inspectable whenever the required receipt was captured.
+A best-effort capture remains inspectable whenever the required receipt was captured, but replay must fail closed when substantive leader evidence is unavailable.
