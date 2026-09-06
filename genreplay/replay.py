@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any, Protocol
 
 from .capsule import Capsule
+from .codec import decode_eq_blocks_outputs
 from .errors import ReplayError
 from .models import ReplayResult, ReplayScenario
 from .util import ensure_hex_prefix, hex_quantity
@@ -26,18 +27,52 @@ def _trace_eq_outputs(trace: dict[str, Any]) -> list[str]:
     return [ensure_hex_prefix(str(item)) for item in raw]
 
 
+def _leader_results_from_capsule(
+    capsule: Capsule,
+    receipt: dict[str, Any],
+    round_number: int,
+) -> tuple[list[str], str]:
+    trace_name = f"traces/round-{round_number:03d}.json"
+    if capsule.has(trace_name):
+        trace = capsule.read_json(trace_name)
+        outputs = _trace_eq_outputs(trace)
+        if outputs:
+            return outputs, "trace.eq_outputs"
+
+    round_data = receipt.get("roundData") or []
+    if not isinstance(round_data, list):
+        round_data = []
+    # Receipt-level eqBlocksOutputs is transaction-level rather than explicitly
+    # round-keyed. It is therefore safe as a per-round fallback only when the
+    # receipt has one consensus round. Multi-round replay requires round traces.
+    if len(round_data) <= 1:
+        raw_receipt_outputs = receipt.get("eqBlocksOutputs")
+        if isinstance(raw_receipt_outputs, str) and raw_receipt_outputs:
+            outputs = decode_eq_blocks_outputs(raw_receipt_outputs)
+            if outputs:
+                return outputs, "receipt.eqBlocksOutputs"
+
+    available = ", ".join(str(v) for v in capsule.trace_rounds()) or "none"
+    if len(round_data) > 1:
+        detail = (
+            "receipt eqBlocksOutputs is not round-keyed and cannot safely identify outputs "
+            "for a multi-round transaction"
+        )
+    else:
+        detail = "neither the trace nor receipt contains substantive equivalence outputs"
+    raise ReplayError(
+        f"validator-mode replay requires leader_results for round {round_number}; "
+        f"available trace rounds: {available}; {detail}"
+    )
+
+
 def scenario_from_capsule(capsule: Capsule, *, round_number: int = 0) -> ReplayScenario:
     receipt = capsule.read_json("transaction/receipt.json")
-    trace_name = f"traces/round-{round_number:03d}.json"
-    if not capsule.has(trace_name):
-        available = ", ".join(str(v) for v in capsule.trace_rounds()) or "none"
-        raise ReplayError(f"capsule has no trace for round {round_number}; available rounds: {available}")
-    trace = capsule.read_json(trace_name)
-    leader_results = _trace_eq_outputs(trace)
-    if not leader_results:
-        raise ReplayError(
-            "captured trace has no equivalence outputs; validator-mode replay requires leader_results"
-        )
+    leader_results, leader_results_source = _leader_results_from_capsule(
+        capsule,
+        receipt,
+        round_number,
+    )
 
     sender = receipt.get("sender") or receipt.get("txOrigin")
     recipient = receipt.get("recipient")
@@ -75,7 +110,7 @@ def scenario_from_capsule(capsule: Capsule, *, round_number: int = 0) -> ReplayS
         leader_results=leader_results,
         round_number=round_number,
         notes=[
-            "Validator-mode replay uses captured leader equivalence outputs.",
+            f"Validator-mode replay leader_results source: {leader_results_source}.",
             "Validator-side nondeterminism is evaluated by the target RPC at replay time.",
         ],
     )
