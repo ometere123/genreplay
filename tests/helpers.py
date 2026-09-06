@@ -1,5 +1,4 @@
 import base64
-from typing import Any
 
 
 TX_ID = "0x" + "11" * 32
@@ -15,7 +14,7 @@ def receipt(
     status: str = "Finalized",
     execution: str = "FinishedWithReturn",
     rounds: int = 1,
-) -> dict[str, Any]:
+) -> dict[str, object]:
     data = []
     for round_number in range(rounds):
         data.append(
@@ -57,7 +56,7 @@ def receipt(
     }
 
 
-def lifecycle(*, action: str = "NoOp") -> dict[str, Any]:
+def lifecycle(*, action: str = "NoOp") -> dict[str, object]:
     return {
         "storedStatus": "Finalized",
         "storedStatusCode": 7,
@@ -73,7 +72,7 @@ def lifecycle(*, action: str = "NoOp") -> dict[str, Any]:
     }
 
 
-def trace(*, disagreement: int | None = None, eq_outputs: list[str] | None = None) -> dict[str, Any]:
+def trace(*, disagreement: int | None = None, eq_outputs: list[str] | None = None) -> dict[str, object]:
     return {
         "transaction_id": TX_ID,
         "result_code": 0,
