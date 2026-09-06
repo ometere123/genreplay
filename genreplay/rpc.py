@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import socket
 import urllib.error
 import urllib.request
 from itertools import count
@@ -44,7 +43,7 @@ class GenLayerRpcClient:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RpcError(f"HTTP {exc.code} calling {method}: {detail[:500]}") from exc
-        except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+        except (urllib.error.URLError, TimeoutError) as exc:
             raise RpcError(f"transport error calling {method}: {exc}") from exc
 
         try:
