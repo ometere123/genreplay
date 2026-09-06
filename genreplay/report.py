@@ -67,6 +67,7 @@ def build_timeline(capsule: Capsule) -> dict[str, Any]:
                 "rotations_left": item.get("rotations_left", 0),
                 "appeal_bond": item.get("appeal_bond", "0"),
                 "result": item.get("result"),
+                "result_name": item.get("result_name"),
                 "trace": _trace_details(capsule, round_number),
             }
         )
@@ -82,6 +83,7 @@ def build_timeline(capsule: Capsule) -> dict[str, Any]:
             "rotations_left",
             "appeal_bond",
             "result",
+            "result_name",
         ):
             if previous.get(key) != current.get(key):
                 changed.append(key)
@@ -151,14 +153,22 @@ def explain_capsule(capsule: Capsule) -> dict[str, Any]:
     elif "timeout" in status_norm or "TIMEOUT" in warning_codes:
         cause = "CONSENSUS_TIMEOUT"
         conclusion = "The captured lifecycle contains a timeout outcome rather than ordinary completion."
+    elif status_norm in {"accepted", "finalized"} and execution_norm == "notvoted":
+        cause = "EXECUTION_RESULT_NOT_VOTED"
+        conclusion = (
+            "Consensus reached a decided/finalized state, but the receipt records NOT_VOTED for "
+            "execution. GenReplay treats this as absence of a successful execution result, not as "
+            "proof of a contract runtime error."
+        )
     elif status_norm in {"accepted", "finalized"} and execution_norm not in {
         "finishedwithreturn",
         "success",
     }:
         cause = "EXECUTION_FAILED_AFTER_CONSENSUS"
         conclusion = (
-            "Consensus reached a decided/finalized state, but the Intelligent Contract execution did "
-            "not finish successfully. Finalized is therefore not equivalent to successful execution."
+            "Consensus reached a decided/finalized state, but the recorded Intelligent Contract "
+            "execution result did not finish successfully. Finalized is therefore not equivalent "
+            "to successful execution."
         )
     elif timeline.get("successful"):
         cause = "CONSENSUS_AND_EXECUTION_SUCCEEDED"
