@@ -35,7 +35,7 @@ class ReplayScenario:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "ReplayScenario":
+    def from_dict(cls, value: dict[str, Any]) -> ReplayScenario:
         return cls(
             version=int(value.get("version", 1)),
             source_tx_id=str(value["source_tx_id"]),
