@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "source_tx_id": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "rpc_hint": "http://localhost:4000/api",
+  "from_address": "0x0000000000000000000000000000000000000001",
+  "to_address": "0x0000000000000000000000000000000000000002",
+  "call_type": "write",
+  "data": "0x00",
+  "status": "accepted",
+  "block_number": null,
+  "value": "0x0",
+  "leader_results": ["0x01"],
+  "round_number": 0,
+  "notes": [
+    "Illustrative only. Generate real scenarios with `genreplay fork`."
+  ]
+}
