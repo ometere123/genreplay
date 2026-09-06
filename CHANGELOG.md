@@ -10,6 +10,7 @@ Submission-hardening release.
 - Added transaction-aware `doctor --tx-id` that performs actual capture and validator replay probing.
 - Added a strict Bradbury `live-evidence` GitHub workflow with uploaded failure/success artifacts.
 - Added `docs/SUBMISSION_EVIDENCE.md` with reproducible public transaction cases and evidence rules.
+- Evidence bundles now commit every generated reviewer artifact by SHA-256 and byte length and expose offline bundle verification through the Python API.
 
 ### Replay semantics
 
@@ -22,6 +23,7 @@ Submission-hardening release.
 - Never attribute transaction-level receipt outputs to a historical round in multi-round history.
 - Replay scenarios now use `round_number = null` for transaction-level evidence.
 - Every replay records its leader-results provenance.
+- Distinguish `NOT_VOTED` from explicit runtime failure so historical receipts are not over-interpreted.
 
 ### Protocol compatibility
 
@@ -34,6 +36,7 @@ Submission-hardening release.
 
 - Added stable high-level `GenReplay` Python API.
 - Added machine-readable schema-versioned JSON output for submission-critical reports.
+- Added `GenReplay.verify_evidence(...)` for offline reviewer-bundle validation.
 - Bumped package version to `0.2.0` through a dedicated version module.
 
 ### Capsule security
@@ -46,7 +49,7 @@ Submission-hardening release.
 
 ### Verification
 
-- Expanded tests for numeric protocol enums, RLP decoding, provenance, stored-proposal replay, deep doctor, evidence generation, and malicious capsules.
+- Expanded tests for numeric protocol enums, RLP decoding, provenance, stored-proposal replay, deep doctor, evidence generation, evidence tamper detection, `NOT_VOTED` semantics, and malicious capsules.
 - Standard CI now verifies Python 3.11/3.12/3.13, Ruff, pytest, compileall, CLI smoke paths, public API imports, and wheel construction.
 
 ## 0.1.0 - 2026-09-06
