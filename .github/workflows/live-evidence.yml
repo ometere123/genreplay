@@ -55,28 +55,32 @@ jobs:
           import json
           from pathlib import Path
 
-          capture = json.loads(
-              Path("live-proof/capture-case/evidence/evidence.json").read_text()
-          )
+          from genreplay.evidence import verify_evidence_bundle
+
+          capture_root = Path("live-proof/capture-case/evidence")
+          replay_root = Path("live-proof/replay-case/evidence")
+          capture = json.loads((capture_root / "evidence.json").read_text())
           replay_doctor = json.loads(
               Path("live-proof/replay-case/doctor.json").read_text()
           )
-          replay = json.loads(
-              Path("live-proof/replay-case/evidence/evidence.json").read_text()
-          )
+          replay = json.loads((replay_root / "evidence.json").read_text())
 
           assert capture["tx_id"] == "0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890"
           assert capture["capsule"]["integrity_ok"] is True
           assert capture["capture"]["file_count"] >= 3
           assert capture["consensus"]["round_count"] >= 1
+          assert capture["artifact_integrity"]
+          assert verify_evidence_bundle(capture_root)["ok"] is True
 
           assert replay["tx_id"] == "0x6bef2019bdb2fbb40204f459530b1c1ddd4c6358147ad89bb12750d2a1273b93"
           assert replay["capsule"]["integrity_ok"] is True
           assert replay["capture"]["file_count"] >= 3
           assert replay["consensus"]["round_count"] >= 1
           assert replay["replay"]["successful"] >= 1, replay["replay"]
+          assert replay["artifact_integrity"]
+          assert verify_evidence_bundle(replay_root)["ok"] is True
           assert replay_doctor["capabilities"]["validator_replay"] == "available"
-          print("REAL GENLAYER CAPTURE + VALIDATOR REPLAY EVIDENCE: PASS")
+          print("REAL GENLAYER CAPTURE + VALIDATOR REPLAY + EVIDENCE INTEGRITY: PASS")
           PY
 
       - uses: actions/upload-artifact@v4
