@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
+from .capsule import Capsule
 from .capture import CaptureService
 from .replay import ReplayEngine, scenario_from_capsule, scenario_from_receipt_outputs
 from .report import build_timeline, explain_capsule
@@ -21,6 +23,15 @@ class EvidenceService:
     def _write_json(path: Path, value: Any) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(pretty_json(value), encoding="utf-8")
+
+    @staticmethod
+    def _artifact_metadata(root: Path, artifacts: list[str]) -> dict[str, dict[str, Any]]:
+        metadata: dict[str, dict[str, Any]] = {}
+        for relative in artifacts:
+            path = root / relative
+            data = path.read_bytes()
+            metadata[relative] = {"sha256": sha256_bytes(data), "size": len(data)}
+        return metadata
 
     def generate(
         self,
@@ -115,16 +126,24 @@ class EvidenceService:
             self._write_json(root / receipt_path, item)
 
         replay_successes = sum(1 for item in replay_results if item.get("ok"))
-        successful_sources = [
-            str(item.get("source")) for item in replay_results if item.get("ok")
+        successful_sources = [str(item.get("source")) for item in replay_results if item.get("ok")]
+        artifacts = [
+            "incident.genreplay",
+            "integrity.json",
+            "timeline.json",
+            "explanation.json",
+            "analysis.json",
+            "capture-issues.json",
+            *replay_artifacts,
         ]
+        artifact_integrity = self._artifact_metadata(root, artifacts)
         manifest = {
             "schema_version": EVIDENCE_SCHEMA_VERSION,
             "tx_id": capsule.manifest.tx_id,
             "network": capsule.manifest.network,
             "capsule": {
                 "path": capsule_path.name,
-                "sha256": sha256_bytes(capsule_path.read_bytes()),
+                "sha256": artifact_integrity["incident.genreplay"]["sha256"],
                 "integrity_ok": bool(integrity.get("ok")),
             },
             "consensus": {
@@ -147,15 +166,82 @@ class EvidenceService:
                 "successful_sources": successful_sources,
             },
             "primary_cause": explanation.get("primary_cause"),
-            "artifacts": [
-                "incident.genreplay",
-                "integrity.json",
-                "timeline.json",
-                "explanation.json",
-                "analysis.json",
-                "capture-issues.json",
-                *replay_artifacts,
-            ],
+            "artifacts": artifacts,
+            "artifact_integrity": artifact_integrity,
         }
         self._write_json(root / "evidence.json", manifest)
         return manifest
+
+
+def verify_evidence_bundle(output_dir: str | Path) -> dict[str, Any]:
+    """Verify a generated evidence bundle without contacting a GenLayer network."""
+
+    root = Path(output_dir)
+    manifest_path = root / "evidence.json"
+    errors: list[str] = []
+    try:
+        manifest_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {
+            "schema_version": EVIDENCE_SCHEMA_VERSION,
+            "ok": False,
+            "errors": [f"invalid evidence.json: {exc}"],
+            "file_count": 0,
+        }
+    if not isinstance(manifest_raw, dict):
+        return {
+            "schema_version": EVIDENCE_SCHEMA_VERSION,
+            "ok": False,
+            "errors": ["evidence.json must contain an object"],
+            "file_count": 0,
+        }
+    if manifest_raw.get("schema_version") != EVIDENCE_SCHEMA_VERSION:
+        errors.append(
+            f"unsupported evidence schema version: {manifest_raw.get('schema_version')!r}"
+        )
+
+    integrity = manifest_raw.get("artifact_integrity")
+    if not isinstance(integrity, dict):
+        errors.append("evidence bundle has no artifact_integrity manifest")
+        integrity = {}
+
+    for relative, metadata in integrity.items():
+        if not isinstance(relative, str) or not isinstance(metadata, dict):
+            errors.append(f"invalid artifact metadata: {relative!r}")
+            continue
+        path = root / relative
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(root.resolve())
+        except (OSError, ValueError):
+            errors.append(f"unsafe artifact path: {relative}")
+            continue
+        if not path.is_file():
+            errors.append(f"missing artifact: {relative}")
+            continue
+        data = path.read_bytes()
+        if sha256_bytes(data) != str(metadata.get("sha256")):
+            errors.append(f"digest mismatch: {relative}")
+        try:
+            expected_size = int(metadata.get("size", -1))
+        except (TypeError, ValueError):
+            expected_size = -1
+        if len(data) != expected_size:
+            errors.append(f"size mismatch: {relative}")
+
+    capsule_path = root / "incident.genreplay"
+    if capsule_path.is_file():
+        try:
+            Capsule.load(capsule_path, verify=True)
+        except Exception as exc:
+            errors.append(f"capsule verification failed: {exc}")
+    else:
+        errors.append("missing artifact: incident.genreplay")
+
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "ok": not errors,
+        "errors": errors,
+        "file_count": len(integrity),
+        "tx_id": manifest_raw.get("tx_id"),
+    }
