@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .capture import CaptureService
-from .replay import ReplayEngine, scenario_from_capsule
+from .replay import ReplayEngine, scenario_from_capsule, scenario_from_receipt_outputs
 from .rpc import GenLayerRpcClient
 
 
@@ -13,6 +13,45 @@ def _check(name: str, fn: Any) -> dict[str, Any]:
         return {"name": name, "ok": True, "value": value}
     except Exception as exc:
         return {"name": name, "ok": False, "error": str(exc)}
+
+
+def _probe_validator_replay(rpc: Any, capsule: Any) -> tuple[dict[str, Any] | None, list[str]]:
+    errors: list[str] = []
+    engine = ReplayEngine(rpc)
+
+    for round_number in capsule.trace_rounds():
+        try:
+            scenario = scenario_from_capsule(capsule, round_number=round_number)
+            replay = engine.run(scenario)
+            return (
+                {
+                    "source": "round-trace",
+                    "round": round_number,
+                    "round_attributed": True,
+                    "leader_results": len(scenario.leader_results),
+                    "signature": replay.signature,
+                },
+                errors,
+            )
+        except Exception as exc:
+            errors.append(f"round {round_number}: {exc}")
+
+    try:
+        scenario = scenario_from_receipt_outputs(capsule)
+        replay = engine.run(scenario)
+        return (
+            {
+                "source": "receipt.eqBlocksOutputs",
+                "round": None,
+                "round_attributed": False,
+                "leader_results": len(scenario.leader_results),
+                "signature": replay.signature,
+            },
+            errors,
+        )
+    except Exception as exc:
+        errors.append(f"transaction-level receipt: {exc}")
+    return None, errors
 
 
 def run_doctor(rpc: GenLayerRpcClient, *, tx_id: str | None = None) -> dict[str, Any]:
@@ -37,6 +76,8 @@ def run_doctor(rpc: GenLayerRpcClient, *, tx_id: str | None = None) -> dict[str,
         "mode": "connectivity" if tx_id is None else "transaction",
         "capture": "unproven",
         "validator_replay": "unproven",
+        "validator_replay_source": None,
+        "validator_replay_round_attributed": None,
         "historical_source": "unproven",
         "historical_state": "unproven",
         "lifecycle": "unproven",
@@ -87,35 +128,27 @@ def run_doctor(rpc: GenLayerRpcClient, *, tx_id: str | None = None) -> dict[str,
                 }
             )
 
-            if capsule.trace_rounds():
-                round_number = capsule.trace_rounds()[0]
-                try:
-                    scenario = scenario_from_capsule(capsule, round_number=round_number)
-                    replay = ReplayEngine(rpc).run(scenario)
-                    capabilities["validator_replay"] = "available"
-                    checks.append(
-                        {
-                            "name": "validator_mode_gen_call",
-                            "ok": True,
-                            "value": replay.signature,
-                        }
-                    )
-                except Exception as exc:
-                    capabilities["validator_replay"] = "failed"
-                    checks.append(
-                        {
-                            "name": "validator_mode_gen_call",
-                            "ok": False,
-                            "error": str(exc),
-                        }
-                    )
+            replay_probe, replay_errors = _probe_validator_replay(rpc, capsule)
+            if replay_probe is not None:
+                capabilities["validator_replay"] = "available"
+                capabilities["validator_replay_source"] = replay_probe["source"]
+                capabilities["validator_replay_round_attributed"] = replay_probe[
+                    "round_attributed"
+                ]
+                checks.append(
+                    {
+                        "name": "validator_mode_gen_call",
+                        "ok": True,
+                        "value": replay_probe,
+                    }
+                )
             else:
                 capabilities["validator_replay"] = "unavailable"
                 checks.append(
                     {
                         "name": "validator_mode_gen_call",
                         "ok": False,
-                        "error": "no captured trace round exposes leader equivalence outputs",
+                        "error": "; ".join(replay_errors),
                     }
                 )
         except Exception as exc:
