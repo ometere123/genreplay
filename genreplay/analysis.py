@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .protocol import execution_result_name, round_result_name, transaction_status_name
 from .util import parse_int
 
 
@@ -10,8 +11,8 @@ def _norm(value: Any) -> str:
 
 
 def execution_succeeded(receipt: dict[str, Any]) -> bool:
-    status = _norm(receipt.get("statusName"))
-    execution = _norm(receipt.get("txExecutionResultName"))
+    status = _norm(transaction_status_name(receipt))
+    execution = _norm(execution_result_name(receipt))
     return status in {"accepted", "finalized"} and execution in {
         "finishedwithreturn",
         "success",
@@ -26,10 +27,8 @@ def analyze_receipt(
     contract_code_captured: bool = False,
 ) -> dict[str, Any]:
     traces = traces or {}
-    status_name = str(receipt.get("statusName") or receipt.get("status") or "UNKNOWN")
-    execution_name = str(
-        receipt.get("txExecutionResultName") or receipt.get("txExecutionResult") or "UNKNOWN"
-    )
+    status_name = transaction_status_name(receipt)
+    execution_name = execution_result_name(receipt)
     rounds: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
 
@@ -45,7 +44,8 @@ def analyze_receipt(
             validators = []
         leader_index = parse_int(item.get("leaderIndex"), -1)
         leader = validators[leader_index] if 0 <= leader_index < len(validators) else None
-        trace = traces.get(index) or traces.get(parse_int(item.get("round"), index))
+        round_number = parse_int(item.get("round"), index)
+        trace = traces.get(round_number)
         disagreement = None
         if trace:
             disagreement = trace.get("nondetDisagreementCallNo")
@@ -53,7 +53,7 @@ def analyze_receipt(
                 disagreement = trace.get("nondet_disagreement_call_no")
         rounds.append(
             {
-                "round": parse_int(item.get("round"), index),
+                "round": round_number,
                 "leader_index": leader_index,
                 "leader": leader,
                 "committee_size": len(validators),
@@ -63,6 +63,7 @@ def analyze_receipt(
                 "rotations_left": parse_int(item.get("rotationsLeft")),
                 "appeal_bond": str(item.get("appealBond", "0")),
                 "result": item.get("result"),
+                "result_name": round_result_name(item.get("result")),
                 "trace_captured": trace is not None,
                 "nondet_disagreement_call": disagreement,
             }
@@ -73,7 +74,7 @@ def analyze_receipt(
                 {
                     "code": "PARTIAL_REVEAL",
                     "severity": "info",
-                    "round": index,
+                    "round": round_number,
                     "message": "fewer votes are revealed than committee members in the captured receipt",
                 }
             )
@@ -82,7 +83,7 @@ def analyze_receipt(
                 {
                     "code": "TRACE_NONDET_DISAGREEMENT",
                     "severity": "high",
-                    "round": index,
+                    "round": round_number,
                     "message": f"trace reports nondeterministic disagreement at call {disagreement}",
                 }
             )
@@ -152,7 +153,9 @@ def analyze_receipt(
     return {
         "tx_id": receipt.get("id"),
         "status": status_name,
+        "status_code": receipt.get("status"),
         "execution_result": execution_name,
+        "execution_result_code": receipt.get("txExecutionResult"),
         "successful": execution_succeeded(receipt),
         "recipient": receipt.get("recipient"),
         "sender": receipt.get("sender"),
