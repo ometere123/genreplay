@@ -6,7 +6,7 @@ from typing import Any
 from .capsule import Capsule
 from .capture import CaptureService
 from .doctor import run_doctor
-from .evidence import EvidenceService
+from .evidence import EvidenceService, verify_evidence_bundle
 from .replay import ReplayEngine, scenario_from_capsule, scenario_from_receipt_outputs
 from .report import build_timeline, explain_capsule
 from .rpc import GenLayerRpcClient
@@ -94,3 +94,7 @@ class GenReplay:
 
     def evidence(self, tx_id: str, output_dir: str | Path, **kwargs: Any) -> dict[str, Any]:
         return EvidenceService(self.rpc).generate(tx_id, output_dir, **kwargs)
+
+    def verify_evidence(self, output_dir: str | Path) -> dict[str, Any]:
+        """Verify an evidence directory entirely offline."""
+        return verify_evidence_bundle(output_dir)
