@@ -1,6 +1,5 @@
 import base64
 
-
 TX_ID = "0x" + "11" * 32
 ADDRESS_A = "0x" + "aa" * 20
 ADDRESS_B = "0x" + "bb" * 20
