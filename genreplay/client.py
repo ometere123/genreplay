@@ -15,12 +15,8 @@ from .rpc import GenLayerRpcClient
 class GenReplay:
     """Stable high-level Python API for GenReplay infrastructure workflows."""
 
-    def __init__(self, rpc: str | GenLayerRpcClient, *, timeout: float = 30.0):
-        self.rpc = (
-            rpc
-            if isinstance(rpc, GenLayerRpcClient)
-            else GenLayerRpcClient(str(rpc), timeout=timeout)
-        )
+    def __init__(self, rpc: str | GenLayerRpcClient | Any, *, timeout: float = 30.0):
+        self.rpc = GenLayerRpcClient(rpc, timeout=timeout) if isinstance(rpc, str) else rpc
 
     def doctor(self, *, tx_id: str | None = None) -> dict[str, Any]:
         return run_doctor(self.rpc, tx_id=tx_id)
