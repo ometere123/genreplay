@@ -12,7 +12,7 @@ from .helpers import TX_ID
 
 def make_capsule() -> Capsule:
     return Capsule.build(
-        tool_version="0.1.0",
+        tool_version="0.2.0",
         captured_at="2026-09-06T00:00:00Z",
         tx_id=TX_ID,
         capture_level="protocol",
@@ -41,7 +41,7 @@ def test_missing_declared_file_fails(tmp_path: Path):
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("manifest.json", json.dumps(manifest))
         zf.writestr("transaction/receipt.json", b'{"id":"x"}\n')
-    with pytest.raises(CapsuleError, match="missing declared file"):
+    with pytest.raises(CapsuleError, match="missing declared entries"):
         Capsule.load(path)
 
 
@@ -56,7 +56,51 @@ def test_digest_mismatch_fails(tmp_path: Path):
         zf.writestr("manifest.json", manifest)
         zf.writestr("transaction/receipt.json", receipt)
         zf.writestr("x.txt", b"tampered")
-    with pytest.raises(CapsuleError, match="digest mismatch"):
+    with pytest.raises(CapsuleError, match="ZIP size does not match manifest|digest mismatch"):
+        Capsule.load(path)
+
+
+def test_undeclared_payload_is_rejected(tmp_path: Path):
+    path = tmp_path / "bad.genreplay"
+    cap = make_capsule()
+    cap.write(path)
+    with zipfile.ZipFile(path, "r") as original:
+        members = {name: original.read(name) for name in original.namelist()}
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+        zf.writestr("hidden/payload.txt", b"not committed")
+    with pytest.raises(CapsuleError, match="undeclared entries"):
+        Capsule.load(path)
+
+
+def test_path_traversal_is_rejected(tmp_path: Path):
+    path = tmp_path / "bad.genreplay"
+    cap = make_capsule()
+    manifest = cap.manifest.to_dict()
+    manifest["files"]["../escape.txt"] = {
+        "sha256": "0" * 64,
+        "size": 1,
+    }
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+        zf.writestr("transaction/receipt.json", b'{"id":"x"}\n')
+        zf.writestr("x.txt", b"hello\n")
+        zf.writestr("../escape.txt", b"x")
+    with pytest.raises(CapsuleError, match="unsafe path"):
+        Capsule.load(path)
+
+
+def test_duplicate_zip_members_are_rejected(tmp_path: Path):
+    path = tmp_path / "bad.genreplay"
+    cap = make_capsule()
+    manifest = json.dumps(cap.manifest.to_dict())
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("manifest.json", manifest)
+        zf.writestr("transaction/receipt.json", b'{"id":"x"}\n')
+        zf.writestr("x.txt", b"hello\n")
+        zf.writestr("x.txt", b"hello\n")
+    with pytest.raises(CapsuleError, match="duplicate ZIP member"):
         Capsule.load(path)
 
 

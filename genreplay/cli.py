@@ -12,10 +12,12 @@ from .capture import CaptureService
 from .diffing import diff_capsules
 from .doctor import run_doctor
 from .errors import GenReplayError
+from .evidence import EvidenceService
 from .export import export_pytest
 from .models import ReplayScenario
 from .networks import PRESETS, resolve_rpc
-from .replay import ReplayEngine, scenario_from_capsule
+from .replay import ReplayEngine, scenario_from_capsule, scenario_from_receipt_outputs
+from .report import build_timeline, explain_capsule
 from .rpc import GenLayerRpcClient
 from .util import pretty_json
 
@@ -81,10 +83,11 @@ def build_parser() -> argparse.ArgumentParser:
     networks = sub.add_parser("networks", help="list built-in GenLayer RPC presets")
     networks.set_defaults(handler=cmd_networks)
 
-    doctor = sub.add_parser("doctor", help="check zero-side-effect RPC connectivity")
+    doctor = sub.add_parser("doctor", help="probe GenReplay compatibility and replay capability")
     doctor.add_argument("--network", choices=sorted(PRESETS))
     doctor.add_argument("--rpc")
     doctor.add_argument("--timeout", type=float, default=10.0)
+    doctor.add_argument("--tx-id", help="prove capture and validator replay using this real transaction")
     doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(handler=cmd_doctor)
 
@@ -100,6 +103,18 @@ def build_parser() -> argparse.ArgumentParser:
     capture.add_argument("--json", action="store_true")
     capture.set_defaults(handler=cmd_capture)
 
+    evidence = sub.add_parser("evidence", help="generate a reviewer-ready live transaction evidence bundle")
+    evidence.add_argument("tx_id")
+    evidence.add_argument("-o", "--output", required=True)
+    evidence.add_argument("--network", choices=sorted(PRESETS))
+    evidence.add_argument("--rpc")
+    evidence.add_argument("--timeout", type=float, default=60.0)
+    evidence.add_argument("--no-contract", action="store_true")
+    evidence.add_argument("--no-state", action="store_true")
+    evidence.add_argument("--no-replay", action="store_true")
+    evidence.add_argument("--json", action="store_true")
+    evidence.set_defaults(handler=cmd_evidence)
+
     inspect = sub.add_parser("inspect", help="summarize a replay capsule")
     inspect.add_argument("capsule")
     inspect.add_argument("--json", action="store_true")
@@ -111,9 +126,26 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--json", action="store_true")
     verify.set_defaults(handler=cmd_verify)
 
+    timeline = sub.add_parser("timeline", help="show consensus rounds and round-to-round changes")
+    timeline.add_argument("capsule")
+    timeline.add_argument("--json", action="store_true")
+    timeline.set_defaults(handler=cmd_timeline)
+
+    explain = sub.add_parser("explain", help="derive a deterministic explanation from protocol evidence")
+    explain.add_argument("capsule")
+    explain.add_argument("--json", action="store_true")
+    explain.set_defaults(handler=cmd_explain)
+
     replay = sub.add_parser("replay", help="run captured leader outputs through validator-mode gen_call")
     replay.add_argument("capsule")
-    replay.add_argument("--round", type=int, default=0)
+    replay_mode = replay.add_mutually_exclusive_group()
+    replay_mode.add_argument("--round", type=int, help="replay one round-attributed trace (default: 0)")
+    replay_mode.add_argument("--all-rounds", action="store_true", help="replay every round with trace outputs")
+    replay_mode.add_argument(
+        "--receipt-current",
+        action="store_true",
+        help="replay transaction-level receipt eqBlocksOutputs without round attribution",
+    )
     replay.add_argument("--network", choices=sorted(PRESETS))
     replay.add_argument("--rpc")
     replay.add_argument("--timeout", type=float, default=60.0)
@@ -128,7 +160,13 @@ def build_parser() -> argparse.ArgumentParser:
     fork = sub.add_parser("fork", help="export a mutable counterfactual replay scenario")
     fork.add_argument("capsule")
     fork.add_argument("-o", "--output", required=True)
-    fork.add_argument("--round", type=int, default=0)
+    fork_mode = fork.add_mutually_exclusive_group()
+    fork_mode.add_argument("--round", type=int, help="fork a round-attributed replay (default: 0)")
+    fork_mode.add_argument(
+        "--receipt-current",
+        action="store_true",
+        help="fork transaction-level receipt eqBlocksOutputs without round attribution",
+    )
     fork.add_argument("--target")
     fork.add_argument("--sender")
     fork.add_argument("--block")
@@ -179,16 +217,22 @@ def cmd_networks(args: argparse.Namespace) -> int:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     rpc = _rpc_from_args(args)
-    report = run_doctor(rpc)
+    report = run_doctor(rpc, tx_id=args.tx_id)
     if args.json:
         _print_json(report)
     else:
         print(f"endpoint : {report['endpoint']}")
         print(f"chain id : {report['chain_id']}")
+        print(f"grade    : {report['grade']}")
         for check in report["checks"]:
             state = "PASS" if check["ok"] else "FAIL"
             detail = check.get("value", check.get("error", ""))
             print(f"{state} {check['name']}: {detail}")
+        if args.tx_id:
+            print("capabilities:")
+            for name, value in report["capabilities"].items():
+                if name != "capture_issue_stages":
+                    print(f"  {name:32} {value}")
     return 0 if report["ok"] else 2
 
 
@@ -203,6 +247,7 @@ def cmd_capture(args: argparse.Namespace) -> int:
     output = Path(args.output or f"{capsule.manifest.tx_id[2:14]}.genreplay")
     capsule.write(output)
     result = {
+        "schema_version": 1,
         "output": str(output),
         "tx_id": capsule.manifest.tx_id,
         "files": len(capsule.manifest.files),
@@ -218,11 +263,39 @@ def cmd_capture(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_evidence(args: argparse.Namespace) -> int:
+    rpc = _rpc_from_args(args)
+    result = EvidenceService(rpc).generate(
+        args.tx_id,
+        args.output,
+        include_contract=not args.no_contract,
+        include_state=not args.no_state,
+        replay_rounds=not args.no_replay,
+    )
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"evidence bundle: {Path(args.output)}")
+        print(f"transaction    : {result['tx_id']}")
+        print(f"status         : {result['consensus']['status']}")
+        print(f"execution      : {result['consensus']['execution_result']}")
+        print(f"rounds         : {result['consensus']['round_count']}")
+        print(
+            "replays        : "
+            f"{result['replay']['successful']}/{result['replay']['attempted']} successful"
+        )
+        if result["replay"].get("successful_sources"):
+            print(f"replay sources : {', '.join(result['replay']['successful_sources'])}")
+        print(f"primary cause  : {result['primary_cause']}")
+    return 0 if result["capsule"]["integrity_ok"] else 3
+
+
 def cmd_inspect(args: argparse.Namespace) -> int:
     capsule = Capsule.load(args.capsule, verify=not args.no_verify)
     if args.json:
         _print_json(
             {
+                "schema_version": 1,
                 "manifest": capsule.manifest.to_dict(),
                 "analysis": (
                     capsule.read_json("analysis/summary.json")
@@ -245,6 +318,7 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 def cmd_verify(args: argparse.Namespace) -> int:
     capsule = Capsule.load(args.capsule, verify=False)
     report = capsule.verify_integrity()
+    report["schema_version"] = 1
     if args.json:
         _print_json(report)
     else:
@@ -252,6 +326,43 @@ def cmd_verify(args: argparse.Namespace) -> int:
         for error in report["errors"]:
             print(" -", error)
     return 0 if report["ok"] else 3
+
+
+def cmd_timeline(args: argparse.Namespace) -> int:
+    result = build_timeline(Capsule.load(args.capsule))
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"transaction : {result['tx_id']}")
+        print(f"status      : {result['status']}")
+        print(f"execution   : {result['execution_result']}")
+        print(f"rounds      : {result['round_count']}")
+        for item in result["rounds"]:
+            trace = item["trace"]
+            print(
+                f"round {item['round']}: leader={item['leader']} committee={item['committee_size']} "
+                f"revealed={item['votes_revealed']} eq_outputs={trace['eq_output_count']} "
+                f"disagreement={trace['nondet_disagreement_call']}"
+            )
+        for transition in result["transitions"]:
+            changed = ", ".join(transition["changed"]) or "none"
+            print(f"change {transition['from_round']} -> {transition['to_round']}: {changed}")
+    return 0
+
+
+def cmd_explain(args: argparse.Namespace) -> int:
+    result = explain_capsule(Capsule.load(args.capsule))
+    if args.json:
+        _print_json(result)
+    else:
+        print(f"transaction    : {result['tx_id']}")
+        print(f"primary cause  : {result['primary_cause']}")
+        print(f"conclusion     : {result['conclusion']}")
+        print("evidence:")
+        for item in result["evidence"]:
+            print(f"  - {item}")
+        print(f"note           : {result['note']}")
+    return 0
 
 
 def _apply_scenario_overrides(scenario: ReplayScenario, args: argparse.Namespace) -> ReplayScenario:
@@ -272,27 +383,104 @@ def _apply_scenario_overrides(scenario: ReplayScenario, args: argparse.Namespace
     return scenario
 
 
+def _scenario_for_replay(
+    capsule: Capsule,
+    args: argparse.Namespace,
+    *,
+    round_number: int | None = None,
+    receipt_current: bool = False,
+) -> ReplayScenario:
+    if receipt_current:
+        scenario = scenario_from_receipt_outputs(capsule)
+    else:
+        scenario = scenario_from_capsule(capsule, round_number=0 if round_number is None else round_number)
+    return _apply_scenario_overrides(scenario, args)
+
+
+def _execute_scenario(scenario: ReplayScenario, args: argparse.Namespace) -> dict[str, Any]:
+    rpc = _rpc_from_args(args, rpc_hint=scenario.rpc_hint)
+    return ReplayEngine(rpc).run(scenario).to_dict()
+
+
 def cmd_replay(args: argparse.Namespace) -> int:
     capsule = Capsule.load(args.capsule)
-    scenario = _apply_scenario_overrides(scenario_from_capsule(capsule, round_number=args.round), args)
-    rpc = _rpc_from_args(args, rpc_hint=scenario.rpc_hint)
-    result = ReplayEngine(rpc).run(scenario).to_dict()
+    if args.all_rounds:
+        results: list[dict[str, Any]] = []
+        for round_number in capsule.trace_rounds():
+            try:
+                scenario = _scenario_for_replay(capsule, args, round_number=round_number)
+                results.append(
+                    {
+                        "source": "round-trace",
+                        "round": round_number,
+                        "round_attributed": True,
+                        "ok": True,
+                        "result": _execute_scenario(scenario, args),
+                    }
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "source": "round-trace",
+                        "round": round_number,
+                        "round_attributed": True,
+                        "ok": False,
+                        "error": str(exc),
+                    }
+                )
+        payload = {
+            "schema_version": 1,
+            "tx_id": capsule.manifest.tx_id,
+            "rounds": results,
+            "successful": sum(1 for item in results if item["ok"]),
+            "attempted": len(results),
+        }
+        if args.json:
+            _print_json(payload)
+        else:
+            print(f"source tx : {capsule.manifest.tx_id}")
+            for item in results:
+                if item["ok"]:
+                    sig = item["result"]["signature"]
+                    print(
+                        f"round {item['round']}: PASS status={sig.get('status_code')} "
+                        f"disagreement={sig.get('nondet_disagreement_call')}"
+                    )
+                else:
+                    print(f"round {item['round']}: FAIL {item['error']}")
+            print(f"replayed: {payload['successful']}/{payload['attempted']}")
+        return 0 if results and all(item["ok"] for item in results) else 2
+
+    scenario = _scenario_for_replay(
+        capsule,
+        args,
+        round_number=args.round,
+        receipt_current=args.receipt_current,
+    )
+    result = _execute_scenario(scenario, args)
     if args.json:
         _print_json(result)
     else:
         sig = result["signature"]
+        label = "transaction-level" if scenario.round_number is None else str(scenario.round_number)
         print(f"source tx      : {scenario.source_tx_id}")
         print(f"target         : {scenario.to_address}")
-        print(f"round          : {scenario.round_number}")
+        print(f"round          : {label}")
         print(f"leader outputs : {len(scenario.leader_results)}")
         print(f"status         : {sig.get('status_code')} {sig.get('status_message')}")
         print(f"disagreement   : {sig.get('nondet_disagreement_call')}")
+        print(f"provenance     : {scenario.notes[0]}")
     return 0
 
 
 def cmd_fork(args: argparse.Namespace) -> int:
     capsule = Capsule.load(args.capsule)
-    scenario = _apply_scenario_overrides(scenario_from_capsule(capsule, round_number=args.round), args)
+    scenario = _scenario_for_replay(
+        capsule,
+        args,
+        round_number=args.round,
+        receipt_current=args.receipt_current,
+    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(pretty_json(scenario.to_dict()), encoding="utf-8")

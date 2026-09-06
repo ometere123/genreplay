@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "certified_at": "2026-09-06T01:42:25Z",
+  "certified_implementation_sha": "a1e3aa0445fb514ad60cc433c715ae8e4881687b",
+  "workflow": {
+    "name": "live-evidence",
+    "run_id": 34004547147,
+    "conclusion": "success",
+    "artifact_id": 9980531505,
+    "artifact_name": "genreplay-bradbury-live-proof",
+    "artifact_sha256": "4eed3574114b0caf6fa659fccda4d8c6e035a3208e8024e46c5001353c11fc2e"
+  },
+  "capture_control": {
+    "tx_id": "0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890",
+    "network": "testnet-bradbury",
+    "chain_id": 4221,
+    "capsule_sha256": "ec22e1a8bade952f4c6e88ecb8c4855f0669d36d5481d2898da8ff180dfd5129",
+    "integrity_ok": true,
+    "status": "FINALIZED",
+    "execution_result": "FINISHED_WITH_ERROR",
+    "successful": false,
+    "round_count": 1,
+    "capture_issue_count": 3,
+    "replay_attempted": 0,
+    "purpose": "real-network capture compatibility and negative replay control; receipt equivalence payload is padding-only"
+  },
+  "replay_case": {
+    "tx_id": "0x6bef2019bdb2fbb40204f459530b1c1ddd4c6358147ad89bb12750d2a1273b93",
+    "network": "testnet-bradbury",
+    "chain_id": 4221,
+    "capsule_sha256": "85bffd6a59f4bdb1d945a971701bbcf99d36e3af50dc33c18b2e1d1614496c16",
+    "integrity_ok": true,
+    "status": "FINALIZED",
+    "execution_result": "NOT_VOTED",
+    "successful": false,
+    "round_count": 7,
+    "trace_rounds": [0, 1, 2, 3, 4],
+    "capture_file_count": 13,
+    "capture_issue_count": 1,
+    "historical_source_captured": true,
+    "historical_state_captured": true,
+    "replay": {
+      "attempted": 6,
+      "successful": 1,
+      "failed": 5,
+      "successful_source": "receipt.eqBlocksOutputs",
+      "round_attributed": false,
+      "scenario_round_number": null,
+      "leader_results_count": 1,
+      "leader_results": [
+        "0x008c017b226f7574636f6d65223a22594553227d"
+      ],
+      "signature": {
+        "status_code": 0,
+        "status_message": "success",
+        "nondet_disagreement_call": null,
+        "return_data": "00",
+        "stderr_present": false,
+        "event_count": 0,
+        "message_count": 0
+      },
+      "provenance_note": "Validator-mode replay leader_results source: transaction-level receipt.eqBlocksOutputs; this evidence is intentionally not attributed to a specific consensus round."
+    },
+    "doctor": {
+      "grade": "REPLAY_READY_PARTIAL_CAPTURE",
+      "validator_replay": "available",
+      "validator_replay_source": "receipt.eqBlocksOutputs",
+      "validator_replay_round_attributed": false
+    }
+  }
+}

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "genreplay"
-version = "0.1.0"
-description = "Capture, replay, fork, minimize, and regression-test GenLayer consensus executions."
+version = "0.2.0"
+description = "Capture, replay, explain, fork, minimize, and regression-test GenLayer consensus executions."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}

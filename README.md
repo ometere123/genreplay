@@ -2,298 +2,394 @@
 
 **Replay GenLayer consensus, not just transactions.**
 
-GenReplay is pure developer infrastructure for capturing a GenLayer Intelligent Contract transaction as a portable, integrity-checked replay capsule and then rerunning its **leader equivalence outputs through GenVM validator mode**.
+GenReplay is pure developer infrastructure for turning a GenLayer Intelligent Contract transaction into a portable, integrity-checked consensus artifact and then replaying protocol-visible leader evidence through **GenVM validator mode**.
 
-It has no frontend, no wallet flow, and no Intelligent Contract of its own. It works on *your* contracts and *your* GenLayer transactions.
+It has **no frontend, no browser wallet flow, and no Intelligent Contract of its own**. Developers bring their own contracts and transactions.
 
 ```text
-live GenLayer transaction
+real GenLayer transaction
         │
-        ├─ receipt / rounds / committee / vote hashes
-        ├─ advanced lifecycle projection
-        ├─ per-round GenVM debug traces + eq_outputs
-        ├─ historical contract code / schema / state (when available)
+        ├─ receipt / committee / round history / votes
+        ├─ lifecycle projection when exposed
+        ├─ GenVM debug traces
+        ├─ transaction-level eqBlocksOutputs
+        ├─ historical contract code / schema / state when exposed
         ▼
    .genreplay capsule
         │
-        ├─ inspect / integrity verify / diff
-        ├─ validator-mode protocol replay
-        ├─ counterfactual target/sender/block/RPC forks
-        ├─ conservative leader-output prefix minimization
-        └─ pytest regression export
+        ├─ verify / inspect / timeline / explain
+        ├─ round-attributed validator replay
+        ├─ transaction-level stored-proposal replay
+        ├─ counterfactual fork / minimize / diff
+        ├─ pytest regression export
+        └─ reviewer-ready evidence bundle
 ```
 
 ## Why this exists
 
-A GenLayer execution is not adequately described by an EVM receipt. The protocol has a leader, a validator committee, equivalence outputs, commit/reveal rounds, possible rotations and appeals, and a distinction between consensus status and execution success.
+A GenLayer transaction is not adequately described by an ordinary deterministic-chain receipt. A single execution may involve a leader, a validator committee, nondeterministic equivalence outputs, commit/reveal rounds, rotations, appeals, timeouts, and separate **consensus status** and **execution result** semantics.
 
-When a real transaction behaves unexpectedly, developers need to answer questions such as:
+When something behaves unexpectedly, developers need to answer questions such as:
 
-- Which round and committee produced the decision?
-- What leader equivalence outputs were validators judging?
+- Which committees and leaders participated across the consensus history?
+- Did the transaction finalize even though contract execution failed?
+- Which protocol-visible equivalence outputs are available for validator replay?
+- Are those outputs attributable to a particular round or only to the stored transaction proposal?
 - Does the captured proposal still pass the validator path today?
-- Does a patched or separately deployed contract reject the historical proposal?
-- Does the behavior change on another GenLayer environment?
-- Can a live failure become a permanent regression test?
+- Does a patched or separately deployed contract reject the same proposal?
+- Can this incident become a permanent CI regression?
 
-GenReplay makes those questions executable.
+GenReplay makes those questions executable and preserves the evidence used to answer them.
 
-## What GenReplay is not
+## What GenReplay does not claim
 
-GenReplay deliberately avoids claims the network cannot support:
+GenReplay deliberately rejects evidence overclaiming:
 
-- It does **not** claim to reconstruct private raw HTTP/LLM responses that were never exposed by the node.
-- It does **not** claim that a replay against today's validator configuration is identical to every historical validator's private execution environment.
-- It does **not** mutate opaque GenVM equivalence bytes and call the result a valid counterexample.
-- It does **not** infer success from `ACCEPTED` or `FINALIZED` alone.
+- A public historical transaction does **not** reveal private HTTP/LLM responses that the node never exposed.
+- `gen_call` validator mode is a validator-path execution, **not** a newly assembled stake-weighted consensus committee.
+- Transaction-level `eqBlocksOutputs` are **not assigned to a historical round** unless the evidence makes that attribution unambiguous.
+- Opaque GenVM equivalence outputs are never arbitrarily edited and called a valid counterexample.
+- `ACCEPTED` or `FINALIZED` alone never means the contract execution succeeded.
+- A capsule hash proves post-capture integrity; it does not prove that a malicious source RPC told the truth.
 
-Historical captures are **protocol replay**: protocol-visible receipt, lifecycle, traces, equivalence outputs, code, schema and state. A future instrumented capture mode can add full raw nondeterminism snapshots when those inputs are intentionally recorded during development.
+These boundaries are part of the implementation, not only documentation.
 
 ## Installation
 
 ```bash
 python -m pip install -e .
-# or once published
-pip install genreplay
 ```
 
-Python 3.11+ is supported. GenLayer's own current testing stack commonly targets Python 3.12+.
+The runtime has no mandatory third-party dependencies. Python 3.11, 3.12, and 3.13 are verified in CI.
 
-## Quick start
+## Submission-grade quick path
 
-### 1. Check an RPC
+The fastest way to prove GenReplay against a real transaction is now:
 
 ```bash
-genreplay doctor --network studionet
+genreplay doctor \
+  --network testnet-bradbury \
+  --tx-id 0xYOUR_TRANSACTION \
+  --json
+
+genreplay evidence \
+  0xYOUR_TRANSACTION \
+  --network testnet-bradbury \
+  -o evidence/transaction \
+  --json
 ```
 
-Built-in presets:
+`doctor --tx-id` performs an actual in-memory capture and attempts validator replay. It grades the environment as one of:
 
-```bash
-genreplay networks
+```text
+FULL
+REPLAY_READY_PARTIAL_CAPTURE
+CAPTURE_ONLY
+CONNECTIVITY_ONLY
+UNAVAILABLE
 ```
 
-### 2. Capture a transaction
+`evidence` creates a reviewer-friendly directory containing:
+
+```text
+evidence.json
+incident.genreplay
+integrity.json
+analysis.json
+timeline.json
+explanation.json
+capture-issues.json
+replays/
+  round-000.json
+  round-001.json
+  ...
+  receipt-current.json
+```
+
+Every unsuccessful replay attempt remains in the evidence bundle. Missing protocol evidence is not silently discarded.
+
+## Capture
 
 ```bash
 genreplay capture \
-  0xYOUR_32_BYTE_GENLAYER_TRANSACTION_ID \
+  0xYOUR_32_BYTE_TRANSACTION_ID \
   --network studionet \
   -o incident.genreplay
 ```
 
-Or point at any compatible GenLayer node:
+Or target a compatible node directly:
 
 ```bash
 genreplay capture 0x... --rpc http://localhost:4000/api -o incident.genreplay
 ```
 
-### 3. Inspect the consensus event
+A capture can preserve:
+
+- raw transaction receipt;
+- round and committee history;
+- lifecycle projection when supported;
+- per-round debug traces;
+- transaction-level `eqBlocksOutputs`;
+- contract source;
+- source SHA-256;
+- schema;
+- historical contract state;
+- analysis warnings;
+- explicit capture gaps.
+
+Only the transaction receipt is mandatory. Optional surface failures are recorded in `capture/issues.json` so a partial forensic artifact remains inspectable.
+
+## Inspect, timeline, and explain
 
 ```bash
 genreplay inspect incident.genreplay
+
+genreplay timeline incident.genreplay
+
+genreplay explain incident.genreplay
 ```
 
-Example shape:
+Machine-readable form:
+
+```bash
+genreplay inspect incident.genreplay --json
+genreplay timeline incident.genreplay --json
+genreplay explain incident.genreplay --json
+```
+
+All new v0.2 reports include a schema version.
+
+`timeline` exposes consensus history and round-to-round changes. `explain` is deliberately deterministic and rule-based; it does **not** send protocol evidence to a centralized AI model.
+
+Example explanation causes include:
 
 ```text
-GenReplay capsule v1
-transaction : 0x...
-captured    : 2026-09-06T00:00:00Z
-network     : studionet
-chain id    : 61999
-status      : Finalized
-execution   : FinishedWithReturn
-successful  : True
-rounds      : 1
-trace rounds: 0
-files       : 11
-warnings    : 0
+NONDETERMINISTIC_DISAGREEMENT
+CONSENSUS_UNDETERMINED
+CONSENSUS_TIMEOUT
+EXECUTION_FAILED_AFTER_CONSENSUS
+CONSENSUS_AND_EXECUTION_SUCCEEDED
 ```
 
-### 4. Verify capsule integrity
+## Two replay modes
+
+GenReplay 0.2 explicitly distinguishes two evidence classes.
+
+### 1. Round-attributed replay
+
+When a captured round trace exposes substantive `eq_outputs`:
 
 ```bash
-genreplay verify incident.genreplay
+genreplay replay incident.genreplay --round 0 --network studionet
 ```
 
-Every payload file is SHA-256 committed by `manifest.json`.
-
-### 5. Replay the captured leader result through validator mode
+For every trace-backed round:
 
 ```bash
-genreplay replay incident.genreplay --network studionet
+genreplay replay incident.genreplay --all-rounds --network studionet
 ```
 
-GenReplay obtains the selected round's `eq_outputs` from the captured trace and calls `gen_call` with `leader_results`, which instructs GenVM to execute the validator path.
+The resulting scenario has a concrete `round_number` and its provenance says the leader results came from that round's trace.
 
-A replay reports a compact diagnostic signature including:
+### 2. Transaction-level stored-proposal replay
+
+Some public/testnet receipts expose transaction-level `eqBlocksOutputs` while debug traces do not expose per-round equivalence outputs. GenReplay decodes the protocol RLP payload and can replay it without inventing round attribution:
+
+```bash
+genreplay replay incident.genreplay \
+  --receipt-current \
+  --network testnet-bradbury
+```
+
+This scenario intentionally stores:
 
 ```json
 {
-  "status_code": 0,
-  "status_message": "success",
-  "nondet_disagreement_call": null,
-  "return_data": "0x...",
-  "stderr_present": false,
-  "event_count": 0,
-  "message_count": 0
+  "round_number": null
 }
 ```
 
-### 6. Fork the experiment
+and records that the evidence came from transaction-level `receipt.eqBlocksOutputs`.
 
-Export a mutable scenario:
+For single-round transactions, receipt output fallback may be treated as unambiguous round evidence. For multi-round history, it remains explicitly transaction-level.
+
+## Counterfactual replay
+
+Fork a historical proposal into a mutable scenario:
 
 ```bash
-genreplay fork incident.genreplay -o candidate.json
+genreplay fork incident.genreplay \
+  --round 0 \
+  -o scenario.json
 ```
 
-Counterfactual examples:
+Or fork the transaction-level stored proposal:
 
 ```bash
-# Replay against another deployed contract implementation
 genreplay fork incident.genreplay \
+  --receipt-current \
+  -o stored-proposal.json
+```
+
+Replay against another deployed contract revision:
+
+```bash
+genreplay fork incident.genreplay \
+  --receipt-current \
   --target 0xPATCHED_CONTRACT \
   --latest-state \
   -o patched.json
 
 genreplay run-scenario patched.json --network studionet
-
-# Replay on localnet
-genreplay run-scenario candidate.json --network localnet
-
-# Pin different historical state
-genreplay fork incident.genreplay --block 0x151ec5 -o historical.json
 ```
 
-The scenario format is intentionally plain JSON so CI systems and coding agents can manipulate it without importing GenReplay.
+`--latest-state` exists because a newly deployed candidate may not have existed at the original transaction block. GenReplay requires that context change to be explicit.
 
-### 7. Conservatively minimize a validator counterexample
+## Conservative counterexample minimization
 
 ```bash
-genreplay minimize candidate.json \
+genreplay minimize scenario.json \
   --rpc http://localhost:4000/api \
   -o minimized.json
 ```
 
-Equivalence outputs are opaque. GenReplay therefore performs only an ordered-prefix reduction. Each shorter prefix is executed against real `gen_call`; it is kept only if the diagnostic signature is exactly preserved. Trial evidence is written beside the minimized scenario.
+Equivalence outputs are opaque protocol bytes. GenReplay therefore performs only ordered-prefix reduction. Every shorter candidate is executed through actual validator-mode `gen_call`; it is retained only if the diagnostic signature exactly matches the target behavior. Trial evidence is written next to the minimized scenario.
 
-### 8. Turn a production incident into a regression test
+## Production incident → regression test
 
 ```bash
 genreplay export-test incident.genreplay \
   -o tests/test_consensus_incident.py
 ```
 
-The generated test copies the capsule into `tests/replays/` beside the test tree so the regression is portable and committable. It always verifies capsule integrity offline. Set `GENREPLAY_RPC` in CI to enable the live validator replay assertion.
+The generated test stores the replay capsule under `tests/replays/`, verifies capsule integrity offline, and can enable live validator replay when `GENREPLAY_RPC` is set in CI.
+
+## Python API
+
+GenReplay is also a library:
+
+```python
+from genreplay import GenReplay
+
+replay = GenReplay("https://rpc-bradbury.genlayer.com")
+
+report = replay.doctor(tx_id="0x...")
+capsule = replay.capture("0x...")
+
+timeline = replay.timeline(capsule)
+explanation = replay.explain(capsule)
+
+# Round-attributed replay when per-round evidence exists.
+round_result = replay.replay(capsule, round_number=0)
+
+# Transaction-level stored proposal, deliberately not round-attributed.
+stored_result = replay.replay_receipt(capsule)
+```
 
 ## Commands
 
 | Command | Purpose |
 |---|---|
-| `networks` | Show GenLayer RPC presets and chain IDs |
-| `doctor` | Zero-side-effect RPC connectivity check |
-| `capture` | Build a `.genreplay` archive from a live transaction |
-| `inspect` | Summarize status, execution, rounds, warnings and capture gaps |
-| `verify` | Verify file sizes and SHA-256 commitments |
-| `replay` | Validator-mode replay using captured leader equivalence outputs |
+| `networks` | Show built-in GenLayer RPC presets and chain IDs |
+| `doctor` | Probe connectivity; with `--tx-id`, prove capture/replay capabilities |
+| `capture` | Create a versioned `.genreplay` artifact from a real transaction |
+| `evidence` | Generate a reviewer-ready live transaction evidence bundle |
+| `inspect` | Summarize consensus status, execution result, warnings, and capture gaps |
+| `verify` | Verify declared sizes and SHA-256 payload commitments |
+| `timeline` | Show consensus rounds and round-to-round changes |
+| `explain` | Produce a deterministic protocol-evidence explanation |
+| `replay` | Run round-attributed or transaction-level leader evidence through validator mode |
 | `fork` | Export a mutable counterfactual scenario |
-| `run-scenario` | Execute a saved scenario |
-| `minimize` | Reduce leader-result prefix while preserving replay signature |
+| `run-scenario` | Execute a saved validator-mode scenario |
+| `minimize` | Reduce the leader-result prefix while preserving the replay signature |
 | `diff` | Structurally compare two capsules |
-| `export-test` | Generate capsule-backed pytest regression tests |
-
-Use `genreplay <command> --help` for all options.
-
-## Capsule contents
-
-A typical capsule contains:
-
-```text
-manifest.json
-transaction/receipt.json
-transaction/lifecycle.json
-traces/round-000.json
-traces/round-001.json
-contract/source.b64
-contract/source.py
-contract/source.sha256
-contract/schema.json
-contract/state.hex
-analysis/summary.json
-capture/issues.json
-```
-
-The archive format is specified in [`docs/CAPSULE_SPEC.md`](docs/CAPSULE_SPEC.md).
+| `export-test` | Generate a capsule-backed pytest regression |
 
 ## GenLayer surfaces used
 
-GenReplay intentionally integrates at the node/RPC level rather than hiding consensus details behind a generic blockchain abstraction:
+GenReplay integrates directly with GenLayer protocol/debug RPCs:
 
-- `eth_chainId`
-- `gen_getTransactionReceipt`
-- `gen_getTransactionLifecycle`
-- `gen_dbg_traceTransaction`
-- `gen_getContractCode`
-- `gen_getContractState`
-- `gen_getContractSchema`
-- `gen_call` with `leader_results` validator mode
+```text
+eth_chainId
+gen_getTransactionReceipt
+gen_getTransactionLifecycle
+gen_dbg_traceTransaction
+gen_getContractCode
+gen_getContractState
+gen_getContractSchema
+gen_call + leader_results
+```
 
-See [`docs/RPC_COMPATIBILITY.md`](docs/RPC_COMPATIBILITY.md) and [`docs/REFERENCES.md`](docs/REFERENCES.md).
+The raw protocol objects are preserved rather than normalized away behind a generic blockchain abstraction.
 
 ## Consensus-aware outcome model
 
-GenReplay treats a transaction as successful only when both are true:
+GenReplay treats a transaction as successful only when both conditions hold:
 
-1. consensus status is `Accepted` or `Finalized`; and
-2. execution result is `FinishedWithReturn`.
+1. consensus status is accepted/finalized; and
+2. execution result finished with return.
 
-A finalized user error remains an error. An `Undetermined` transaction is not treated as successful just because a leader produced data.
+Numeric v0.6/testnet receipt enums are normalized to their protocol names. A finalized `FINISHED_WITH_ERROR` remains an execution failure.
+
+## Capsule security
+
+`.genreplay` files are untrusted forensic input. The v0.2 loader rejects:
+
+- duplicate ZIP members;
+- absolute, traversal, and unsafe paths;
+- undeclared ZIP payloads;
+- missing declared payloads;
+- manifest/ZIP size mismatches;
+- oversized manifests;
+- oversized entries;
+- excessive payload counts;
+- excessive total uncompressed size;
+- SHA-256 mismatches.
+
+Normal inspection/replay does not extract arbitrary capsule paths to disk.
+
+## Verification
+
+Standard CI runs on Python 3.11, 3.12, and 3.13 and requires:
+
+```text
+editable package install
+Ruff
+full pytest suite
+compileall
+CLI version/network smoke
+public Python API imports
+wheel construction
+```
+
+A separate `live-evidence` workflow exercises real Bradbury transactions and uploads the evidence directory even on failure so public-network incompatibilities remain inspectable rather than hidden.
+
+See [`docs/SUBMISSION_EVIDENCE.md`](docs/SUBMISSION_EVIDENCE.md), [`docs/TESTING.md`](docs/TESTING.md), and [`docs/REPLAY_SEMANTICS.md`](docs/REPLAY_SEMANTICS.md).
 
 ## Architecture
-
-The implementation is intentionally dependency-light:
 
 ```text
 genreplay.rpc       raw JSON-RPC transport
 genreplay.capture   protocol evidence collector
-genreplay.capsule   deterministic ZIP + integrity manifest
-genreplay.analysis  consensus/lifecycle diagnostics
-genreplay.replay    scenario construction + validator replay
+genreplay.codec     receipt equivalence-output RLP decoding
+genreplay.capsule   deterministic ZIP + integrity/security boundary
+genreplay.analysis  consensus/execution diagnostics
+genreplay.report    timeline + deterministic explanation
+genreplay.replay    validator replay + counterfactual scenarios
+genreplay.evidence  reviewer evidence bundle generation
 genreplay.diffing   structural capsule comparison
 genreplay.export    pytest regression generation
-genreplay.cli       operator/developer interface
+genreplay.client    public Python API
+genreplay.cli       developer/operator interface
 ```
-
-Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for trust boundaries and failure handling.
-
-## Security and privacy
-
-Replay capsules may contain contract source, state snapshots, logs, return data and protocol metadata. Treat them as engineering evidence, not automatically public artifacts. GenReplay does not collect private keys and does not need a browser wallet.
-
-See [`SECURITY.md`](SECURITY.md).
-
-## Development
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-pytest -q
-ruff check .
-python -m genreplay networks
-```
-
-The offline verification strategy is documented in [`docs/TESTING.md`](docs/TESTING.md). No Docker is required for the offline test suite. Live replay requires a compatible GenLayer RPC. Local full-network experiments can target a developer's existing Localnet/Studio setup.
 
 ## Project boundary
 
-GenReplay is intentionally **not a reusable Intelligent Contract**. It defines no contract and does not ask developers to deploy a GenReplay contract. The object under test is the developer's existing GenLayer execution.
+GenReplay is intentionally **not a reusable Intelligent Contract**. It defines no GenReplay contract and asks developers to deploy none. The object being captured and replayed is the developer's existing GenLayer consensus execution.
 
 ## Status
 
-`0.1.0` is an alpha protocol-replay release. The capsule format is versioned from day one so future instrumentation, committee replay adapters and richer nondeterminism capture can evolve without silently changing old evidence.
+`0.2.0` is the submission-hardening release. Capsule format remains v1; machine-readable reports use their own schema versions so reporting can evolve without silently changing archived evidence.
 
 ## License
 

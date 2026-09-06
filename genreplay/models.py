@@ -28,7 +28,7 @@ class ReplayScenario:
     block_number: str | None = None
     value: str | None = None
     leader_results: list[str] = field(default_factory=list)
-    round_number: int = 0
+    round_number: int | None = 0
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,6 +36,7 @@ class ReplayScenario:
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> ReplayScenario:
+        raw_round = value.get("round_number", 0)
         return cls(
             version=int(value.get("version", 1)),
             source_tx_id=str(value["source_tx_id"]),
@@ -48,7 +49,7 @@ class ReplayScenario:
             block_number=value.get("block_number"),
             value=value.get("value"),
             leader_results=[str(v) for v in value.get("leader_results", [])],
-            round_number=int(value.get("round_number", 0)),
+            round_number=None if raw_round is None else int(raw_round),
             notes=[str(v) for v in value.get("notes", [])],
         )
 

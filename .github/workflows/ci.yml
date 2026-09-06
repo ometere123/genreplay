@@ -23,4 +23,19 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: ruff check .
       - run: pytest -q
+      - run: python -m compileall -q genreplay tests
+      - run: python -m genreplay --version
       - run: python -m genreplay networks
+      - name: Verify public Python API
+        run: |
+          python - <<'PY'
+          import genreplay
+          from genreplay import Capsule, GenLayerRpcClient, GenReplay
+          assert genreplay.__version__ == "0.2.0"
+          assert Capsule is not None
+          assert GenLayerRpcClient is not None
+          assert GenReplay is not None
+          print("public API: PASS")
+          PY
+      - name: Build dependency-free wheel
+        run: python -m pip wheel . --no-deps -w dist

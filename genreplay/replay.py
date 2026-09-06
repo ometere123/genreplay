@@ -4,6 +4,7 @@ from dataclasses import replace
 from typing import Any, Protocol
 
 from .capsule import Capsule
+from .codec import decode_eq_blocks_outputs
 from .errors import ReplayError
 from .models import ReplayResult, ReplayScenario
 from .util import ensure_hex_prefix, hex_quantity
@@ -26,19 +27,21 @@ def _trace_eq_outputs(trace: dict[str, Any]) -> list[str]:
     return [ensure_hex_prefix(str(item)) for item in raw]
 
 
-def scenario_from_capsule(capsule: Capsule, *, round_number: int = 0) -> ReplayScenario:
-    receipt = capsule.read_json("transaction/receipt.json")
-    trace_name = f"traces/round-{round_number:03d}.json"
-    if not capsule.has(trace_name):
-        available = ", ".join(str(v) for v in capsule.trace_rounds()) or "none"
-        raise ReplayError(f"capsule has no trace for round {round_number}; available rounds: {available}")
-    trace = capsule.read_json(trace_name)
-    leader_results = _trace_eq_outputs(trace)
-    if not leader_results:
-        raise ReplayError(
-            "captured trace has no equivalence outputs; validator-mode replay requires leader_results"
-        )
+def _receipt_eq_outputs(receipt: dict[str, Any]) -> list[str]:
+    raw = receipt.get("eqBlocksOutputs")
+    if not isinstance(raw, str) or not raw:
+        return []
+    return decode_eq_blocks_outputs(raw)
 
+
+def _scenario_common(
+    capsule: Capsule,
+    receipt: dict[str, Any],
+    *,
+    leader_results: list[str],
+    round_number: int | None,
+    provenance_note: str,
+) -> ReplayScenario:
     sender = receipt.get("sender") or receipt.get("txOrigin")
     recipient = receipt.get("recipient")
     data = receipt.get("txCallData")
@@ -75,9 +78,86 @@ def scenario_from_capsule(capsule: Capsule, *, round_number: int = 0) -> ReplayS
         leader_results=leader_results,
         round_number=round_number,
         notes=[
-            "Validator-mode replay uses captured leader equivalence outputs.",
+            provenance_note,
             "Validator-side nondeterminism is evaluated by the target RPC at replay time.",
         ],
+    )
+
+
+def scenario_from_capsule(capsule: Capsule, *, round_number: int = 0) -> ReplayScenario:
+    """Build a round-attributed replay scenario.
+
+    Per-round replay requires per-round trace equivalence outputs. For a single-round
+    transaction, transaction-level receipt outputs are unambiguous and may be used as
+    a compatibility fallback. Multi-round receipt outputs are never assigned to a
+    specific round.
+    """
+    receipt = capsule.read_json("transaction/receipt.json")
+    trace_name = f"traces/round-{round_number:03d}.json"
+    if capsule.has(trace_name):
+        outputs = _trace_eq_outputs(capsule.read_json(trace_name))
+        if outputs:
+            return _scenario_common(
+                capsule,
+                receipt,
+                leader_results=outputs,
+                round_number=round_number,
+                provenance_note=(
+                    f"Validator-mode replay leader_results source: trace.eq_outputs for round "
+                    f"{round_number}."
+                ),
+            )
+
+    round_data = receipt.get("roundData") or []
+    if not isinstance(round_data, list):
+        round_data = []
+    if len(round_data) <= 1:
+        outputs = _receipt_eq_outputs(receipt)
+        if outputs:
+            return _scenario_common(
+                capsule,
+                receipt,
+                leader_results=outputs,
+                round_number=round_number,
+                provenance_note=(
+                    "Validator-mode replay leader_results source: receipt.eqBlocksOutputs; "
+                    "single-round receipt makes the attribution unambiguous."
+                ),
+            )
+
+    available = ", ".join(str(v) for v in capsule.trace_rounds()) or "none"
+    if len(round_data) > 1:
+        detail = (
+            "receipt eqBlocksOutputs is transaction-level and cannot safely identify outputs "
+            "for this specific round"
+        )
+    else:
+        detail = "neither the trace nor receipt contains substantive equivalence outputs"
+    raise ReplayError(
+        f"validator-mode replay requires leader_results for round {round_number}; "
+        f"available trace rounds: {available}; {detail}"
+    )
+
+
+def scenario_from_receipt_outputs(capsule: Capsule) -> ReplayScenario:
+    """Replay the transaction-level stored proposal without inventing round attribution."""
+    receipt = capsule.read_json("transaction/receipt.json")
+    outputs = _receipt_eq_outputs(receipt)
+    if not outputs:
+        raise ReplayError(
+            "transaction receipt does not contain substantive eqBlocksOutputs; "
+            "padding-only or empty receipt evidence cannot enter validator mode"
+        )
+    return _scenario_common(
+        capsule,
+        receipt,
+        leader_results=outputs,
+        round_number=None,
+        provenance_note=(
+            "Validator-mode replay leader_results source: transaction-level "
+            "receipt.eqBlocksOutputs; this evidence is intentionally not attributed to a "
+            "specific consensus round."
+        ),
     )
 
 

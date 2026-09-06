@@ -2,28 +2,66 @@ from __future__ import annotations
 
 from typing import Any
 
+from .capture import CaptureService
+from .replay import ReplayEngine, scenario_from_capsule, scenario_from_receipt_outputs
 from .rpc import GenLayerRpcClient
 
 
-def run_doctor(rpc: GenLayerRpcClient) -> dict[str, Any]:
+def _check(name: str, fn: Any) -> dict[str, Any]:
+    try:
+        value = fn()
+        return {"name": name, "ok": True, "value": value}
+    except Exception as exc:
+        return {"name": name, "ok": False, "error": str(exc)}
+
+
+def _probe_validator_replay(rpc: Any, capsule: Any) -> tuple[dict[str, Any] | None, list[str]]:
+    errors: list[str] = []
+    engine = ReplayEngine(rpc)
+
+    for round_number in capsule.trace_rounds():
+        try:
+            scenario = scenario_from_capsule(capsule, round_number=round_number)
+            replay = engine.run(scenario)
+            return (
+                {
+                    "source": "round-trace",
+                    "round": round_number,
+                    "round_attributed": True,
+                    "leader_results": len(scenario.leader_results),
+                    "signature": replay.signature,
+                },
+                errors,
+            )
+        except Exception as exc:
+            errors.append(f"round {round_number}: {exc}")
+
+    try:
+        scenario = scenario_from_receipt_outputs(capsule)
+        replay = engine.run(scenario)
+        return (
+            {
+                "source": "receipt.eqBlocksOutputs",
+                "round": None,
+                "round_attributed": False,
+                "leader_results": len(scenario.leader_results),
+                "signature": replay.signature,
+            },
+            errors,
+        )
+    except Exception as exc:
+        errors.append(f"transaction-level receipt: {exc}")
+    return None, errors
+
+
+def run_doctor(rpc: GenLayerRpcClient, *, tx_id: str | None = None) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
 
-    try:
-        chain_id = rpc.chain_id()
-        checks.append({"name": "eth_chainId", "ok": True, "value": chain_id})
-    except Exception as exc:
-        chain_id = None
-        checks.append({"name": "eth_chainId", "ok": False, "error": str(exc)})
+    chain_check = _check("eth_chainId", rpc.chain_id)
+    checks.append(chain_check)
+    chain_id = chain_check.get("value") if chain_check["ok"] else None
+    checks.append(_check("gen_dbg_ping", rpc.ping))
 
-    try:
-        pong = rpc.ping()
-        checks.append({"name": "gen_dbg_ping", "ok": True, "value": pong})
-    except Exception as exc:
-        checks.append({"name": "gen_dbg_ping", "ok": False, "error": str(exc)})
-
-    # Method presence cannot be probed safely without a valid tx/address. The doctor therefore
-    # reports the two zero-side-effect calls it can prove and lists the capture surfaces GenReplay
-    # will exercise when a transaction is supplied.
     required_on_capture = [
         "gen_getTransactionReceipt",
         "gen_getTransactionLifecycle",
@@ -33,10 +71,110 @@ def run_doctor(rpc: GenLayerRpcClient) -> dict[str, Any]:
         "gen_getContractState",
         "gen_call",
     ]
+
+    capabilities: dict[str, Any] = {
+        "mode": "connectivity" if tx_id is None else "transaction",
+        "capture": "unproven",
+        "validator_replay": "unproven",
+        "validator_replay_source": None,
+        "validator_replay_round_attributed": None,
+        "historical_source": "unproven",
+        "historical_state": "unproven",
+        "lifecycle": "unproven",
+        "debug_trace": "unproven",
+    }
+    transaction: dict[str, Any] | None = None
+
+    if tx_id is not None:
+        try:
+            capsule = CaptureService(rpc).capture(tx_id)
+            issues = capsule.read_json("capture/issues.json")
+            issue_stages = {
+                str(item.get("stage"))
+                for item in issues
+                if isinstance(item, dict) and item.get("stage") is not None
+            }
+            capabilities.update(
+                {
+                    "capture": "full" if not issues else "partial",
+                    "historical_source": (
+                        "available" if capsule.has("contract/source.b64") else "unavailable"
+                    ),
+                    "historical_state": (
+                        "available" if capsule.has("contract/state.hex") else "unavailable"
+                    ),
+                    "lifecycle": (
+                        "available" if capsule.has("transaction/lifecycle.json") else "unavailable"
+                    ),
+                    "debug_trace": "available" if capsule.trace_rounds() else "unavailable",
+                    "capture_issue_stages": sorted(issue_stages),
+                }
+            )
+            transaction = {
+                "tx_id": capsule.manifest.tx_id,
+                "trace_rounds": capsule.trace_rounds(),
+                "file_count": len(capsule.manifest.files),
+                "integrity": capsule.verify_integrity(),
+                "analysis": capsule.read_json("analysis/summary.json"),
+            }
+            checks.append(
+                {
+                    "name": "transaction_capture",
+                    "ok": True,
+                    "value": {
+                        "files": len(capsule.manifest.files),
+                        "issues": len(issues) if isinstance(issues, list) else 0,
+                    },
+                }
+            )
+
+            replay_probe, replay_errors = _probe_validator_replay(rpc, capsule)
+            if replay_probe is not None:
+                capabilities["validator_replay"] = "available"
+                capabilities["validator_replay_source"] = replay_probe["source"]
+                capabilities["validator_replay_round_attributed"] = replay_probe[
+                    "round_attributed"
+                ]
+                checks.append(
+                    {
+                        "name": "validator_mode_gen_call",
+                        "ok": True,
+                        "value": replay_probe,
+                    }
+                )
+            else:
+                capabilities["validator_replay"] = "unavailable"
+                checks.append(
+                    {
+                        "name": "validator_mode_gen_call",
+                        "ok": False,
+                        "error": "; ".join(replay_errors),
+                    }
+                )
+        except Exception as exc:
+            capabilities["capture"] = "failed"
+            checks.append({"name": "transaction_capture", "ok": False, "error": str(exc)})
+
+    core_ok = all(check["ok"] for check in checks[:2])
+    if tx_id is None:
+        grade = "CONNECTIVITY_ONLY" if core_ok else "UNAVAILABLE"
+    elif not core_ok or capabilities["capture"] == "failed":
+        grade = "UNAVAILABLE"
+    elif capabilities["validator_replay"] == "available" and capabilities["capture"] == "full":
+        grade = "FULL"
+    elif capabilities["validator_replay"] == "available":
+        grade = "REPLAY_READY_PARTIAL_CAPTURE"
+    else:
+        grade = "CAPTURE_ONLY"
+
     return {
+        "schema_version": 1,
         "endpoint": rpc.endpoint,
         "chain_id": chain_id,
-        "ok": all(check["ok"] for check in checks),
+        "ok": core_ok and (tx_id is None or capabilities["capture"] != "failed"),
+        "grade": grade,
         "checks": checks,
+        "capabilities": capabilities,
+        "transaction": transaction,
         "capture_surfaces": required_on_capture,
     }
