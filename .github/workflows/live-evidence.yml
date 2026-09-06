@@ -1,0 +1,55 @@
+name: live-evidence
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bradbury-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      KNOWN_TX: "0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[dev]'
+      - name: Prove Bradbury transaction compatibility
+        run: |
+          mkdir -p live-proof
+          genreplay doctor --network testnet-bradbury --tx-id "$KNOWN_TX" --json | tee live-proof/doctor.json
+      - name: Generate real GenReplay evidence bundle
+        run: |
+          genreplay evidence "$KNOWN_TX" \
+            --network testnet-bradbury \
+            --output live-proof/evidence \
+            --json | tee live-proof/evidence-command.json
+      - name: Enforce submission evidence quality
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          doctor = json.loads(Path("live-proof/doctor.json").read_text())
+          evidence = json.loads(Path("live-proof/evidence/evidence.json").read_text())
+
+          assert doctor["transaction"]["tx_id"] == "0x563f046c187d711127c51213ca62e2e4fee52009a98f0989a73a0a0382d21890"
+          assert evidence["capsule"]["integrity_ok"] is True
+          assert evidence["capture"]["file_count"] >= 3
+          assert evidence["consensus"]["round_count"] >= 1
+          assert evidence["replay"]["successful"] >= 1, evidence["replay"]
+          print("REAL GENLAYER EVIDENCE: PASS")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: genreplay-bradbury-live-proof
+          path: live-proof/
+          if-no-files-found: warn
