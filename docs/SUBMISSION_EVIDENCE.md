@@ -1,10 +1,10 @@
 # Submission Evidence
 
-GenReplay is pure GenLayer developer infrastructure. It has no project-owned Intelligent Contract, frontend, browser wallet flow, or centralized AI decision service. The evidence below is designed to prove the tool against **real GenLayer protocol data**, not only fixture-driven tests.
+GenReplay is pure GenLayer developer infrastructure. It has no project-owned Intelligent Contract, frontend, browser wallet flow, or centralized AI decision service. The evidence below proves the tool against **real GenLayer protocol data**, not only fixture-driven tests.
 
 ## Evidence standard
 
-A submission-grade GenReplay proof must establish all of the following independently:
+A submission-grade GenReplay proof establishes all of the following independently:
 
 1. a real GenLayer transaction can be captured;
 2. the `.genreplay` capsule passes integrity verification;
@@ -15,7 +15,28 @@ A submission-grade GenReplay proof must establish all of the following independe
 7. replay evidence states whether it is round-attributed or transaction-level;
 8. machine-readable evidence can be reproduced by CI.
 
-The `live-evidence` GitHub workflow enforces these properties on public Bradbury data. It uploads the evidence directory even when a gate fails so incompatibilities remain inspectable.
+The `live-evidence` GitHub workflow enforces these properties on public Bradbury data and uploads the evidence directory even when a gate fails.
+
+## Certified live run
+
+The submission-hardening implementation was certified by a fully successful `live-evidence` workflow:
+
+```text
+workflow run       34004547147
+implementation SHA a1e3aa0445fb514ad60cc433c715ae8e4881687b
+artifact ID        9980531505
+artifact name      genreplay-bradbury-live-proof
+artifact SHA-256   4eed3574114b0caf6fa659fccda4d8c6e035a3208e8024e46c5001353c11fc2e
+conclusion         success
+```
+
+A compact immutable record of the certified outputs is committed at:
+
+```text
+evidence/bradbury-v0.2.json
+```
+
+The documentation/evidence-record commits made after the certified implementation do not change the runtime logic exercised by that run.
 
 ## Real case A — official SDK compatibility / negative replay control
 
@@ -33,17 +54,23 @@ chain id 4221
 https://rpc-bradbury.genlayer.com
 ```
 
-This transaction is used by GenLayer's JavaScript SDK smoke tests. GenReplay's live capture established:
+This transaction is used by GenLayer's JavaScript SDK smoke tests. The certified GenReplay capture established:
 
-- real Bradbury receipt capture succeeds;
-- numeric transaction status `7` is normalized as `FINALIZED`;
-- numeric execution result `2` is normalized as `FINISHED_WITH_ERROR`;
-- the transaction has a consensus round with a majority result;
-- the public debug trace is available but exposes no substantive `eq_outputs`;
-- receipt `eqBlocksOutputs` decodes to the protocol padding sentinel only;
-- GenReplay therefore **refuses to manufacture validator replay evidence** from this transaction.
+```text
+capsule SHA-256  ec22e1a8bade952f4c6e88ecb8c4855f0669d36d5481d2898da8ff180dfd5129
+integrity        PASS
+status           FINALIZED
+execution        FINISHED_WITH_ERROR
+successful       false
+round count      1
+capture gaps     3
+```
 
-This is intentionally retained as a negative control. It proves two important GenReplay behaviors:
+The public debug trace is available but exposes no substantive `eq_outputs`. Receipt `eqBlocksOutputs` decodes to the protocol padding sentinel only.
+
+GenReplay therefore **refuses to manufacture validator replay evidence** from this transaction.
+
+This negative control proves two important behaviors:
 
 1. `FINALIZED` is not reported as successful execution when the execution result is an error; and
 2. the presence of an `eqBlocksOutputs` field is not enough to claim replayability when it contains no substantive output.
@@ -64,27 +91,79 @@ chain id 4221
 https://rpc-bradbury.genlayer.com
 ```
 
-This is a public nondeterministic resolution transaction from a real GenLayer project. Live capture has established that it exposes substantially richer protocol evidence:
+The certified capture established:
 
-- capsule integrity passes;
-- historical contract source is available;
-- historical contract state is available;
-- multiple debug trace rounds are available;
-- receipt contains multi-round/appeal-style consensus history with changing committee sizes and outcomes;
-- transaction-level `eqBlocksOutputs` contains a substantive stored result, not only padding;
-- the public round traces do not expose per-round `eq_outputs` for this historical transaction.
-
-The receipt equivalence-output payload decodes to a substantive output representing:
-
-```json
-{"outcome":"YES"}
+```text
+capsule SHA-256        85bffd6a59f4bdb1d945a971701bbcf99d36e3af50dc33c18b2e1d1614496c16
+integrity              PASS
+capture files          13
+capture gaps           1
+status                 FINALIZED
+execution result       NOT_VOTED
+receipt round records  7
+captured trace rounds  0, 1, 2, 3, 4
+historical source      captured
+historical state       captured
 ```
 
-plus the protocol padding sentinel.
+The transaction contains multi-round/appeal-style history with changing committee sizes and outcomes. Its transaction-level `eqBlocksOutputs` contains one substantive stored result rather than only padding.
 
-### Why this case changed GenReplay 0.2
+The public per-round debug traces are present but do not expose historical `eq_outputs`, so five round-attributed replay attempts correctly remain failed evidence rather than being silently rewritten.
 
-The public receipt exposes transaction-level equivalence output bytes but does not bind those bytes to a specific historical round. GenReplay therefore has two separate replay concepts:
+### Successful validator replay
+
+GenReplay then decoded the transaction-level stored proposal and ran it through real Bradbury `gen_call` validator mode.
+
+Evidence:
+
+```text
+replay attempts        6
+successful             1
+failed                 5
+successful source      receipt.eqBlocksOutputs
+round attributed       false
+scenario round_number  null
+leader-results count   1
+```
+
+Captured leader result:
+
+```text
+0x008c017b226f7574636f6d65223a22594553227d
+```
+
+Validator replay signature:
+
+```json
+{
+  "status_code": 0,
+  "status_message": "success",
+  "nondet_disagreement_call": null,
+  "return_data": "00",
+  "stderr_present": false,
+  "event_count": 0,
+  "message_count": 0
+}
+```
+
+Deep doctor result:
+
+```text
+grade                              REPLAY_READY_PARTIAL_CAPTURE
+validator_replay                   available
+validator_replay_source            receipt.eqBlocksOutputs
+validator_replay_round_attributed  false
+```
+
+The scenario provenance stored with the successful replay is:
+
+> Validator-mode replay leader_results source: transaction-level receipt.eqBlocksOutputs; this evidence is intentionally not attributed to a specific consensus round.
+
+That provenance is part of the machine-readable replay artifact.
+
+## Why this case changed GenReplay 0.2
+
+The public receipt exposes transaction-level equivalence output bytes but does not bind those bytes to a specific historical round. GenReplay therefore defines two separate replay concepts.
 
 **Round-attributed replay**
 
@@ -100,7 +179,7 @@ receipt eqBlocksOutputs -> leader_results -> round_number = null
 
 The second mode never claims that the stored receipt output came from round 0, round 1, or another specific historical round.
 
-That distinction is enforced in code, JSON output, evidence metadata, tests, and CLI behavior.
+That distinction is enforced in code, JSON output, evidence metadata, tests, CLI behavior, and the certified live proof.
 
 ## Reproduce the live proof
 
@@ -144,15 +223,15 @@ genreplay replay \
   --json
 ```
 
-## CI evidence
+## CI gate
 
-The workflow file is:
+Workflow:
 
 ```text
 .github/workflows/live-evidence.yml
 ```
 
-Its gate requires:
+The gate requires:
 
 - the official SDK-control transaction to produce an intact real capsule;
 - the replay transaction to produce an intact real capsule;
@@ -161,8 +240,6 @@ Its gate requires:
 - deep `doctor` to report validator replay availability.
 
 A failed public RPC call, missing leader evidence, or failed `gen_call` does not get converted into a passing result.
-
-The exact successful run ID, final commit SHA, capsule SHA-256, and artifact digest are recorded here after the release candidate reaches a fully green head. Until those values are present, this document should not be read as claiming that the final v0.2 release gate has passed.
 
 ## Offline verification
 
@@ -178,9 +255,11 @@ public Python API imports
 wheel construction
 ```
 
+The certified implementation SHA passed all three matrix jobs before the live-evidence gate was stamped.
+
 ## Evidence limitations
 
 - A public historical replay cannot recover private validator credentials, hidden provider changes, or external HTTP/LLM payloads never published by the protocol.
 - Validator-mode `gen_call` is not itself a fresh network consensus round.
 - The source RPC remains part of the trust boundary. Capsule hashing proves integrity after capture, not source-node honesty.
-- Public networks may later prune historical debug/state surfaces. The committed workflow and uploaded artifacts exist to preserve what was verifiable at the release point.
+- Public networks may later prune historical debug/state surfaces. The certified proof record preserves what was verifiable at the release point.
