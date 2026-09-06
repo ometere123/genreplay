@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from typing import Any, Protocol
 
-from . import __version__
+from ._version import __version__
 from .analysis import analyze_receipt
 from .capsule import Capsule
 from .models import CaptureIssue
