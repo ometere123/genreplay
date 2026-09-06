@@ -72,7 +72,7 @@ def build_timeline(capsule: Capsule) -> dict[str, Any]:
         )
 
     transitions: list[dict[str, Any]] = []
-    for previous, current in zip(rounds, rounds[1:]):
+    for previous, current in zip(rounds, rounds[1:], strict=False):
         changed: list[str] = []
         for key in (
             "leader",
