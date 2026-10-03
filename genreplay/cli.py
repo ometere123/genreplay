@@ -12,7 +12,7 @@ from .capture import CaptureService
 from .diffing import diff_capsules
 from .doctor import run_doctor
 from .errors import GenReplayError
-from .evidence import EvidenceService
+from .evidence import EvidenceService, verify_evidence_bundle
 from .export import export_pytest
 from .models import ReplayScenario
 from .networks import PRESETS, resolve_rpc
@@ -114,6 +114,11 @@ def build_parser() -> argparse.ArgumentParser:
     evidence.add_argument("--no-replay", action="store_true")
     evidence.add_argument("--json", action="store_true")
     evidence.set_defaults(handler=cmd_evidence)
+
+    verify_evidence = sub.add_parser("verify-evidence", help="verify an evidence bundle offline")
+    verify_evidence.add_argument("directory")
+    verify_evidence.add_argument("--json", action="store_true")
+    verify_evidence.set_defaults(handler=cmd_verify_evidence)
 
     inspect = sub.add_parser("inspect", help="summarize a replay capsule")
     inspect.add_argument("capsule")
@@ -330,6 +335,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
         _print_json(report)
     else:
         print("PASS" if report["ok"] else "FAIL", f"{report['file_count']} files checked")
+        for error in report["errors"]:
+            print(" -", error)
+    return 0 if report["ok"] else 3
+
+
+def cmd_verify_evidence(args: argparse.Namespace) -> int:
+    report = verify_evidence_bundle(args.directory)
+    if args.json:
+        _print_json(report)
+    else:
+        print("PASS" if report["ok"] else "FAIL", f"{report['file_count']} artifacts checked")
         for error in report["errors"]:
             print(" -", error)
     return 0 if report["ok"] else 3

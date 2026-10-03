@@ -100,6 +100,7 @@ def test_evidence_bundle_contains_reviewer_artifacts(tmp_path: Path):
     assert result["replay"]["attempted"] == 3
     assert result["replay"]["successful"] == 2
     assert result["replay"]["successful_sources"] == ["round-trace", "round-trace"]
+    assert len(result["bundle_root"]) == 64
     assert "timeline.json" in result["artifact_integrity"]
     assert (output / "incident.genreplay").exists()
     assert (output / "evidence.json").exists()
@@ -120,6 +121,15 @@ def test_evidence_bundle_tampering_is_detected(tmp_path: Path):
     verified = verify_evidence_bundle(output)
     assert verified["ok"] is False
     assert "digest mismatch: timeline.json" in verified["errors"]
+
+
+def test_closed_world_evidence_rejects_undeclared_file(tmp_path: Path):
+    output = tmp_path / "evidence"
+    EvidenceService(FullReplayRpc()).generate(TX_ID, output)
+    (output / "unexpected.txt").write_text("not declared", encoding="utf-8")
+    verified = verify_evidence_bundle(output)
+    assert verified["ok"] is False
+    assert "undeclared artifact: unexpected.txt" in verified["errors"]
 
 
 def test_evidence_bundle_records_successful_transaction_level_replay(tmp_path: Path):

@@ -34,6 +34,16 @@ replays/
 
 The nested `incident.genreplay` capsule keeps its own independent manifest and SHA-256 checks.
 
+The manifest also records a canonical `bundle_root` over the sorted declared paths,
+SHA-256 values, and sizes. Closed-world bundles reject undeclared files as well as
+changed, missing, duplicate, or unsafe paths. Use `genreplay verify-evidence DIRECTORY`
+to perform this check offline.
+
+Integrity is not source authenticity: these checks prove that a bundle was not modified
+after capture, not that the source RPC was honest. Validator-path replay only proves
+behaviour against supplied evidence and available historical anchors. Private historical
+LLM or web observations cannot be recreated unless represented by captured leader outputs.
+
 ## Offline verification
 
 Verification does not require a wallet, GenLayer RPC, LLM provider, or internet connection:

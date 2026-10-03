@@ -13,6 +13,15 @@ from .util import pretty_json, sha256_bytes
 EVIDENCE_SCHEMA_VERSION = 1
 
 
+def _bundle_root(metadata: dict[str, dict[str, Any]]) -> str:
+    """Digest declared paths and metadata, not the manifest that contains the digest."""
+    rows = [
+        {"path": path, "sha256": value["sha256"], "size": value["size"]}
+        for path, value in sorted(metadata.items())
+    ]
+    return sha256_bytes(json.dumps(rows, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+
+
 class EvidenceService:
     """Generate a reviewer-friendly evidence bundle from one real GenLayer transaction."""
 
@@ -168,6 +177,8 @@ class EvidenceService:
             "primary_cause": explanation.get("primary_cause"),
             "artifacts": artifacts,
             "artifact_integrity": artifact_integrity,
+            "closed_world": True,
+            "bundle_root": _bundle_root(artifact_integrity),
         }
         self._write_json(root / "evidence.json", manifest)
         return manifest
@@ -205,6 +216,15 @@ def verify_evidence_bundle(output_dir: str | Path) -> dict[str, Any]:
         errors.append("evidence bundle has no artifact_integrity manifest")
         integrity = {}
 
+    declared_paths = manifest_raw.get("artifacts")
+    if not isinstance(declared_paths, list) or not all(isinstance(item, str) for item in declared_paths):
+        errors.append("evidence bundle has invalid artifacts list")
+        declared_paths = []
+    if len(declared_paths) != len(set(declared_paths)):
+        errors.append("evidence bundle declares duplicate artifact paths")
+    if set(declared_paths) != set(integrity):
+        errors.append("artifacts list and artifact_integrity paths differ")
+
     for relative, metadata in integrity.items():
         if not isinstance(relative, str) or not isinstance(metadata, dict):
             errors.append(f"invalid artifact metadata: {relative!r}")
@@ -228,6 +248,24 @@ def verify_evidence_bundle(output_dir: str | Path) -> dict[str, Any]:
             expected_size = -1
         if len(data) != expected_size:
             errors.append(f"size mismatch: {relative}")
+
+    try:
+        computed_root = _bundle_root(integrity)
+    except (KeyError, TypeError):
+        errors.append("invalid metadata prevents bundle-root verification")
+    else:
+        if manifest_raw.get("bundle_root") != computed_root:
+            errors.append("bundle root mismatch")
+
+    if manifest_raw.get("closed_world") is True:
+        actual = {
+            item.relative_to(root).as_posix()
+            for item in root.rglob("*")
+            if item.is_file() and item.name != "evidence.json"
+        }
+        undeclared = actual - set(integrity)
+        if undeclared:
+            errors.append("undeclared artifact: " + ", ".join(sorted(undeclared)[:10]))
 
     capsule_path = root / "incident.genreplay"
     if capsule_path.is_file():
