@@ -2,6 +2,38 @@
 
 GenReplay targets the current GenLayer node API and degrades explicitly when optional development/debug endpoints are unavailable.
 
+## Compatibility contract
+
+This document distinguishes protocol facts from behaviour that depends on a particular
+public RPC. It was checked against the official node API and network documentation on
+2026-10-03:
+
+- [transaction trace](https://docs.genlayer.com/api-references/genlayer-node/debug/gen_dbg_traceTransaction)
+- [network configuration](https://docs.genlayer.com/developers/intelligent-contracts/deploying/network-configuration)
+- [CLI deployment](https://docs.genlayer.com/developers/intelligent-contracts/deploying/cli-deployment)
+
+Confirmed protocol semantics:
+
+- `gen_dbg_traceTransaction` returns a trace whose `result_code` distinguishes return,
+  user error, and GenVM error; its `eq_outputs` are round-scoped only when requested
+  for that round.
+- `gen_call` with `leader_results` is a validator-path simulation. It is not a new
+  committee consensus execution.
+- finality and `txExecutionResult` are distinct receipt facts. `FINALIZED` alone is
+  not a successful contract execution.
+
+Network-specific availability:
+
+- Studionet is chain `61999` at `https://studio.genlayer.com/api`; Studio Dev is a
+  distinct release-candidate network on `61997`.
+- Receipt, lifecycle, trace, code, state, and schema history are probed per
+  transaction. Public RPC retention and debug availability are not assumed.
+
+GenReplay refuses to infer a historical round from transaction-level
+`eqBlocksOutputs`, to treat a latest-state read as historical, or to treat finality as
+execution success. Where an endpoint cannot establish an historical fact, the capture
+records the gap rather than manufacturing a value.
+
 ## Built-in networks
 
 | Name | RPC | Chain ID | Use |
