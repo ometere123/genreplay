@@ -1,0 +1,14 @@
+{
+  "name": "genreplay-tooling",
+  "private": true,
+  "devDependencies": {
+    "genlayer": "0.39.1"
+  },
+  "scripts": {
+    "cli:version": "node scripts/genlayer-local.mjs --version",
+    "cli:accounts": "node scripts/genlayer-local.mjs account list",
+    "cli:network:set": "node scripts/genlayer-local.mjs network set studionet",
+    "cli:network:info": "node scripts/genlayer-local.mjs network info",
+    "cli:guard": "node scripts/genlayer-local.mjs --version"
+  }
+}
