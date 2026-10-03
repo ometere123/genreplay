@@ -2,7 +2,7 @@
 
 """Studionet certification fixture only. It is not part of the GenReplay package."""
 
-from genlayer import gl
+from genlayer import *
 
 
 class GenreplayFixture(gl.Contract):

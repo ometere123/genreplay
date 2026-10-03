@@ -56,3 +56,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# The GenLayer contract SDK exposes `gl` via its required star-import form.
+"fixtures/studionet/*.py" = ["F403", "F405"]
