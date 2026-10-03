@@ -24,12 +24,14 @@ class ReplayScenario:
     to_address: str
     call_type: str
     data: str
+    expected_chain_id: int | None = None
     status: str | None = "accepted"
     block_number: str | None = None
     value: str | None = None
     leader_results: list[str] = field(default_factory=list)
     round_number: int | None = 0
     notes: list[str] = field(default_factory=list)
+    allow_network_mismatch: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -45,12 +47,16 @@ class ReplayScenario:
             to_address=str(value["to_address"]),
             call_type=str(value.get("call_type", "write")),
             data=str(value["data"]),
+            expected_chain_id=(
+                None if value.get("expected_chain_id") is None else int(value["expected_chain_id"])
+            ),
             status=value.get("status"),
             block_number=value.get("block_number"),
             value=value.get("value"),
             leader_results=[str(v) for v in value.get("leader_results", [])],
             round_number=None if raw_round is None else int(raw_round),
             notes=[str(v) for v in value.get("notes", [])],
+            allow_network_mismatch=bool(value.get("allow_network_mismatch", False)),
         )
 
     def to_gen_call_request(self) -> dict[str, Any]:

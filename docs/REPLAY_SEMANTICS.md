@@ -138,6 +138,13 @@ A replay scenario can target another deployed contract address. This is the supp
 
 GenReplay does not pretend a remote node can replace arbitrary historical code. Deploy candidate code to Localnet/Studio or another suitable environment and set an explicit alternate target.
 
+## Network identity guard
+
+Scenarios captured from a known chain carry its expected chain ID. Before a live replay,
+GenReplay queries the target RPC and refuses a mismatch by default. The only escape hatch
+is `--allow-network-mismatch`; it records an explicit counterfactual note and must not be
+used to describe the result as a historical reproduction.
+
 ## Minimization semantics
 
 Equivalence outputs are treated as opaque protocol bytes. GenReplay never flips arbitrary bytes and labels the result a valid counterexample.

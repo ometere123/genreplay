@@ -88,6 +88,28 @@ def test_replay_request_enters_validator_mode():
     assert result.signature["nondet_disagreement_call"] == 1
 
 
+def test_replay_refuses_a_different_chain_by_default():
+    class WrongChain(FakeReplayRpc):
+        def chain_id(self):
+            return 61997
+
+    scenario = scenario_from_capsule(make_capsule())
+    scenario.expected_chain_id = 61999
+    with pytest.raises(ReplayError, match="does not match"):
+        ReplayEngine(WrongChain()).run(scenario)
+
+
+def test_replay_allows_explicit_counterfactual_network_override():
+    class WrongChain(FakeReplayRpc):
+        def chain_id(self):
+            return 61997
+
+    scenario = scenario_from_capsule(make_capsule())
+    scenario.expected_chain_id = 61999
+    scenario.allow_network_mismatch = True
+    assert ReplayEngine(WrongChain()).run(scenario).signature["status_code"] == 0
+
+
 def test_receipt_eq_blocks_outputs_decodes_rlp_and_strips_padding():
     assert decode_eq_blocks_outputs("cb81aa81bb86706164646564") == ["0xaa", "0xbb"]
     assert decode_eq_blocks_outputs("0xc9010286706164646564") == ["0x01", "0x02"]

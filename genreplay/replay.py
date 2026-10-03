@@ -15,6 +15,8 @@ class ReplayRpc(Protocol):
 
     def gen_call(self, request: dict[str, Any]) -> dict[str, Any]: ...
 
+    def chain_id(self) -> int: ...
+
 
 def _trace_eq_outputs(trace: dict[str, Any]) -> list[str]:
     raw = trace.get("eq_outputs")
@@ -72,6 +74,11 @@ def _scenario_common(
         to_address=recipient,
         call_type="write",
         data=ensure_hex_prefix(data),
+        expected_chain_id=(
+            int(capsule.manifest.network["chain_id"])
+            if capsule.manifest.network.get("chain_id") is not None
+            else None
+        ),
         status="accepted",
         block_number=block_number,
         value=value,
@@ -184,6 +191,14 @@ class ReplayEngine:
     def run(self, scenario: ReplayScenario) -> ReplayResult:
         if not scenario.leader_results:
             raise ReplayError("scenario has no leader_results; refusing to pretend this is validator replay")
+        chain_id = getattr(self.rpc, "chain_id", None)
+        if scenario.expected_chain_id is not None and callable(chain_id):
+            actual_chain_id = chain_id()
+            if actual_chain_id != scenario.expected_chain_id and not scenario.allow_network_mismatch:
+                raise ReplayError(
+                    f"target RPC chain {actual_chain_id} does not match scenario chain "
+                    f"{scenario.expected_chain_id}; use --allow-network-mismatch only for counterfactual work"
+                )
         raw = self.rpc.gen_call(scenario.to_gen_call_request())
         return ReplayResult(
             scenario=scenario.to_dict(),

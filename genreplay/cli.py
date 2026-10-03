@@ -159,6 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("--block", help="counterfactual block number")
     replay.add_argument("--latest-state", action="store_true", help="omit historical block pinning")
     replay.add_argument("--status", choices=["accepted", "finalized"])
+    replay.add_argument(
+        "--allow-network-mismatch",
+        action="store_true",
+        help="permit a different chain only for explicitly counterfactual replay",
+    )
     replay.add_argument("--json", action="store_true")
     replay.set_defaults(handler=cmd_replay)
 
@@ -403,6 +408,9 @@ def _apply_scenario_overrides(scenario: ReplayScenario, args: argparse.Namespace
         scenario.data = args.data
     if getattr(args, "rpc", None):
         scenario.rpc_hint = args.rpc
+    if getattr(args, "allow_network_mismatch", False):
+        scenario.allow_network_mismatch = True
+        scenario.notes.append("COUNTERFACTUAL: network identity check was explicitly bypassed.")
     return scenario
 
 
