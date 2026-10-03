@@ -200,8 +200,15 @@ def build_parser() -> argparse.ArgumentParser:
     diff.add_argument("--json", action="store_true")
     diff.set_defaults(handler=cmd_diff)
 
-    export = sub.add_parser("export-test", help="export a capsule-backed pytest regression")
-    export.add_argument("capsule")
+    export = sub.add_parser("export-test", help="export a behavioural validator-replay pytest regression")
+    export.add_argument("source", help="evidence directory, or a capsule used with --baseline")
+    export.add_argument("--baseline", help="successful replay-result JSON when source is a capsule")
+    export.add_argument(
+        "--invariant",
+        action="append",
+        dest="invariants",
+        help="stable signature field to freeze; repeat to mask intentionally unstable fields",
+    )
     export.add_argument("-o", "--output", required=True)
     export.set_defaults(handler=cmd_export_test)
 
@@ -529,7 +536,7 @@ def cmd_diff(args: argparse.Namespace) -> int:
 
 
 def cmd_export_test(args: argparse.Namespace) -> int:
-    output = export_pytest(args.capsule, args.output)
+    output = export_pytest(args.source, args.output, baseline=args.baseline, invariant_fields=args.invariants)
     print(output)
     return 0
 

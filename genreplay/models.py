@@ -79,3 +79,40 @@ class ReplayResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(slots=True)
+class ReplayProvenance:
+    """The immutable origin of leader results used by a behavioural regression."""
+
+    source_tx_id: str
+    source_mode: str
+    round_number: int | None
+    source_capsule_digest: str
+    network: dict[str, Any]
+    chain_id: int | None
+    rpc_hint: str | None
+    from_address: str
+    target_address: str
+    calldata_digest: str
+    value: str | None
+    historical_block_anchor: str | None
+    status_anchor: str | None
+    leader_results_digest: str
+    leader_results_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RegressionSpec:
+    """Versioned, machine-readable contract for an exported replay regression."""
+
+    schema_version: int
+    provenance: ReplayProvenance
+    expected_signature: dict[str, Any]
+    invariant_fields: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
